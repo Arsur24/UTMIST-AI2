@@ -13,7 +13,14 @@ b) Continue training from a specific timestep given an input `file_path`
 # ----------------------------- IMPORTS -----------------------------
 # -------------------------------------------------------------------
 
-import torch 
+# Change working directory to project root to fix asset paths
+import os
+import sys
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(project_root)
+print(f"Working directory: {os.getcwd()}")
+
+import torch
 import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
@@ -24,6 +31,9 @@ from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
+# Initialize pygame as early as possible
+pygame.init()
+
 from environment.agent import *
 from typing import Optional, Type, List, Tuple
 
@@ -32,6 +42,71 @@ try:
     from user import rewards_config as rc
 except Exception:
     import rewards_config as rc
+
+# -------------------------------------------------------------------
+# -------------------------- CUDA CONFIGURATION ---------------------
+# -------------------------------------------------------------------
+
+# Check if CUDA is available and set device
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
+if torch.cuda.is_available():
+    print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
+    print(f"CUDA Version: {torch.version.cuda}")
+    print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+
+# -------------------------------------------------------------------
+# ----------------------- VISUALIZATION CALLBACK --------------------
+# -------------------------------------------------------------------
+
+import time
+from stable_baselines3.common.callbacks import BaseCallback
+
+class VisualizationCallback(BaseCallback):
+    """Callback that runs visualization games periodically during training"""
+    def __init__(self, train_agent, viz_opponent, viz_interval_secs, viz_resolution):
+        super().__init__()
+        self.train_agent = train_agent
+        self.viz_opponent = viz_opponent
+        self.viz_interval_secs = viz_interval_secs
+        self.viz_resolution = viz_resolution
+        self.last_viz_time = time.time()
+        self.viz_count = 0
+
+    def _on_step(self) -> bool:
+        """Called after each training step"""
+        current_time = time.time()
+        elapsed = current_time - self.last_viz_time
+
+        # Run visualization every N seconds
+        if elapsed >= self.viz_interval_secs:
+            self.viz_count += 1
+            print(f"\n{'='*70}")
+            print(f"🎮 VISUALIZATION #{self.viz_count} - Timestep: {self.num_timesteps:,}")
+            print(f"{'='*70}")
+
+            try:
+                # Run demo match with rendering enabled
+                match_stats = run_match(
+                    agent_1=self.train_agent,
+                    agent_2=self.viz_opponent,
+                    max_timesteps=30*90,
+                    agent_1_name="Trained Agent",
+                    agent_2_name="Opponent",
+                    resolution=self.viz_resolution,
+                    train_mode=False  # Enable rendering to show pygame window
+                )
+
+                print(f"✓ Match Result: {match_stats.player1_result}")
+                print(f"{'='*70}\n")
+            except Exception as e:
+                print(f"⚠ Visualization error: {e}")
+                import traceback
+                traceback.print_exc()
+
+            self.last_viz_time = current_time
+
+        return True
 
 # -------------------------------------------------------------------------
 # ----------------------------- AGENT CLASSES -----------------------------
@@ -55,10 +130,22 @@ class SB3Agent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            # Choose n_steps and batch_size so batch_size divides (n_steps * n_envs)
+            N_STEPS = 30 * 90 * 3
+            n_envs = getattr(self.env, 'num_envs', 1)
+            computed_batch = N_STEPS * n_envs
+            self.model = self.sb3_class(
+                "MlpPolicy",
+                self.env,
+                verbose=0,
+                n_steps=N_STEPS,
+                batch_size=computed_batch,
+                ent_coef=0.01,
+                device=DEVICE  # Use CUDA if available
+            )
             del self.env
         else:
-            self.model = self.sb3_class.load(self.file_path)
+            self.model = self.sb3_class.load(self.file_path, device=DEVICE)
 
     def _gdown(self) -> str:
         # Call gdown to your link
@@ -106,16 +193,19 @@ class RecurrentPPOAgent(Agent):
                 'share_features_extractor': True,
 
             }
-            self.model = RecurrentPPO("MlpLstmPolicy",
-                                      self.env,
-                                      verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=16,
-                                      ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
+            self.model = RecurrentPPO(
+                "MlpLstmPolicy",
+                self.env,
+                verbose=0,
+                n_steps=30*90*20,
+                batch_size=16,
+                ent_coef=0.05,
+                policy_kwargs=policy_kwargs,
+                device=DEVICE  # Use CUDA if available
+            )
             del self.env
         else:
-            self.model = RecurrentPPO.load(self.file_path)
+            self.model = RecurrentPPO.load(self.file_path, device=DEVICE)
 
     def reset(self) -> None:
         self.episode_starts = True
@@ -276,11 +366,18 @@ class MLPPolicy(nn.Module):
         # Output layer
         self.fc3 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32)
 
+        # Move model to CUDA if available
+        self.to(DEVICE)
+
     def forward(self, obs):
         """
         obs: [batch_size, obs_dim]
         returns: [batch_size, action_dim]
         """
+        # Ensure input is on the correct device
+        if not obs.is_cuda and DEVICE.type == 'cuda':
+            obs = obs.to(DEVICE)
+
         x = F.relu(self.fc1(obs))
         x = F.relu(self.fc2(x))
         return self.fc3(x)
@@ -296,8 +393,12 @@ class MLPExtractor(BaseFeaturesExtractor):
             action_dim=10,
             hidden_dim=hidden_dim,
         )
-    
+        # Model will be moved to CUDA in MLPPolicy's __init__
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        # Ensure observations are on the correct device
+        if not obs.is_cuda and DEVICE.type == 'cuda':
+            obs = obs.to(DEVICE)
         return self.model(obs)
     
     @classmethod
@@ -315,10 +416,23 @@ class CustomAgent(Agent):
     
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            # Compute batch size compatible with n_steps * n_envs
+            N_STEPS = 30 * 90 * 3
+            n_envs = getattr(self.env, 'num_envs', 1)
+            computed_batch = N_STEPS * n_envs
+            self.model = self.sb3_class(
+                "MlpPolicy",
+                self.env,
+                policy_kwargs=self.extractor.get_policy_kwargs(),
+                verbose=0,
+                n_steps=N_STEPS,
+                batch_size=computed_batch,
+                ent_coef=0.01,
+                device=DEVICE  # Use CUDA if available
+            )
             del self.env
         else:
-            self.model = self.sb3_class.load(self.file_path)
+            self.model = self.sb3_class.load(self.file_path, device=DEVICE)
 
     def _gdown(self) -> str:
         # Call gdown to your link
@@ -584,6 +698,22 @@ The main function runs training. You can change configurations such as the Agent
 '''
 if __name__ == '__main__':
 
+    # ===== CUDA CONFIGURATION =====
+    # Enable parallel training if CUDA is available
+    USE_PARALLEL_TRAINING = torch.cuda.is_available()
+    N_PARALLEL_ENVS = 4  # Number of parallel environments (reduced to see visualization)
+
+    # Adjust batch size and n_steps for parallel training
+    if USE_PARALLEL_TRAINING:
+        print(f"\n{'='*60}")
+        print(f"CUDA ENABLED - Using GPU-accelerated parallel training")
+        print(f"Parallel environments: {N_PARALLEL_ENVS}")
+        print(f"{'='*60}\n")
+    else:
+        print(f"\n{'='*60}")
+        print(f"CUDA NOT AVAILABLE - Using CPU training")
+        print(f"{'='*60}\n")
+
     # Create agent
     my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
@@ -619,11 +749,66 @@ if __name__ == '__main__':
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
-    train(my_agent,
-        reward_manager,
-        save_handler,
-        opponent_cfg,
-        CameraResolution.LOW,
-        train_timesteps=1_000_000_000,
-        train_logging=TrainLogging.PLOT
-    )
+    # Training configuration
+    # Quick smoke-test configuration (change back for full runs)
+    TRAIN_EPOCHS = 4  # Train for 4 complete games/matches for quick testing
+    FAST_MODE = True  # Fast mode: shortened games (90 timesteps) and faster execution
+    VISUALIZATION_INTERVAL = 10  # Run visualization game every 10 seconds
+
+    # ===== SHOW INITIAL UNTRAINED AGENT =====
+    print(f"\n{'='*70}")
+    print(f"🎮 INITIAL VISUALIZATION - Untrained Agent")
+    print(f"{'='*70}")
+    try:
+        # Use a lightweight preview agent for visualization so we don't construct
+        # the SB3 model (which would bind to a single env). RandomAgent represents
+        # an "untrained" policy for quick visual checks. We run the real-time
+        # pygame match so a window appears.
+        preview_agent = RandomAgent()
+        initial_match = run_real_time_match(
+            agent_1=preview_agent,
+            agent_2=BasedAgent(),
+            max_timesteps=30*90,
+            resolution=CameraResolution.LOW
+        )
+        print(f"✓ Initial Real-time Match Result: {initial_match.player1_result}")
+        print(f"{'='*70}\n")
+    except Exception as e:
+        print(f"⚠ Initial visualization error: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Use parallel training if CUDA is available, otherwise use standard training
+    if USE_PARALLEL_TRAINING:
+        # Create visualization callback
+        viz_callback = VisualizationCallback(
+            train_agent=my_agent,
+            viz_opponent=partial(BasedAgent)(),
+            viz_interval_secs=VISUALIZATION_INTERVAL,
+            viz_resolution=CameraResolution.LOW
+        )
+
+        train_parallel(
+            my_agent,
+            reward_manager,
+            save_handler,
+            opponent_cfg,
+            CameraResolution.LOW,
+            train_logging=TrainLogging.PLOT,
+            n_envs=N_PARALLEL_ENVS,  # Parallel environments for GPU acceleration
+            train_epochs=TRAIN_EPOCHS,  # Train for 4 epochs
+            fast_mode=FAST_MODE,  # Fast mode for quick testing
+            visualization_interval=VISUALIZATION_INTERVAL,  # Visualization every 90 seconds
+            custom_callback=viz_callback  # Pass callback for visualization
+        )
+    else:
+        train(
+            my_agent,
+            reward_manager,
+            save_handler,
+            opponent_cfg,
+            CameraResolution.LOW,
+            train_logging=TrainLogging.PLOT,
+            train_epochs=TRAIN_EPOCHS,  # Train for 4 epochs
+            fast_mode=FAST_MODE  # Fast mode for quick testing
+        )

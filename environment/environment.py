@@ -56,7 +56,7 @@ class GameMode(Enum):
 
 
 # Reference PettingZoo AECEnv
-class MalachiteEnv(ABC, Generic[ObsType, ActType, AgentID]):
+class MalachiteEnv(gymnasium.Env, ABC, Generic[ObsType, ActType, AgentID]):
 
     agents: list[AgentID]
 
@@ -420,6 +420,20 @@ class UIHandler():
         self.agent_1_score_pos = (10, -10)  # Top-left
         self.agent_2_score_pos = (camera.window_width - self.score_width - 10, -10)  # Top-right
 
+    def __getstate__(self):
+        """Handle pickling by removing unpicklable pygame surfaces"""
+        state = self.__dict__.copy()
+        # Remove all pygame image surfaces
+        state['agent_1_score'] = None
+        state['agent_2_score'] = None
+        state['life'] = None
+        state['death'] = None
+        return state
+
+    def __setstate__(self, state):
+        """Handle unpickling"""
+        self.__dict__.update(state)
+
     def render(self, camera, env):
         canvas = camera.canvas
 
@@ -688,6 +702,25 @@ class Camera():
 
     def close(self) -> None:
         pygame.quit()
+
+    def __getstate__(self):
+        """Handle pickling by removing unpicklable pygame objects"""
+        state = self.__dict__.copy()
+        # Remove all pygame surfaces and objects
+        state['canvas'] = None
+        state['screen'] = None
+        state['background_image'] = None  # This is also a pygame surface!
+        if 'clock' in state:
+            state['clock'] = None
+        return state
+
+    def __setstate__(self, state):
+        """Handle unpickling by reinitializing pygame objects"""
+        self.__dict__.update(state)
+        # Pygame objects will be reinitialized when needed
+        if self.is_rendering:
+            pygame.init()
+            self.clock = pygame.time.Clock()
 
 
 # ### Warehouse Brawl Environment
@@ -1220,7 +1253,29 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
 
     def close(self) -> None:
         self.camera.close()
-   
+
+    def __getstate__(self):
+        """Handle pickling by removing unpicklable pygame objects"""
+        state = self.__dict__.copy()
+        # Completely remove camera and other unpicklable objects for multiprocessing
+        state['camera'] = None
+        state['ui_handler'] = None  # UIHandler contains pygame surfaces
+        # Also remove any pygame-related objects
+        if 'signal' in state:
+            # Signals might have references to environment which has pygame objects
+            pass
+        return state
+
+    def __setstate__(self, state):
+        """Handle unpickling by reinitializing pygame objects"""
+        self.__dict__.update(state)
+        # Reinitialize camera when unpickled
+        if self.camera is None:
+            self.camera = Camera()
+            # Don't initialize pygame rendering in subprocess
+        if self.ui_handler is None and hasattr(self, 'camera'):
+            self.ui_handler = UIHandler(self.camera)
+
    
     def pre_solve_oneway(self, arbiter, space, data):
         """
@@ -1358,6 +1413,21 @@ class GameObject(ABC):
 
     def process(self) -> None:
         pass
+
+    def __getstate__(self):
+        """Handle pickling by removing unpicklable pygame surfaces"""
+        state = self.__dict__.copy()
+        # Remove any pygame image surfaces that might be stored
+        for key in list(state.keys()):
+            if key.endswith('_img') or key.endswith('_image') or 'image' in key.lower():
+                value = state[key]
+                if value is not None and hasattr(value, '__class__') and 'pygame' in str(type(value)):
+                    state[key] = None
+        return state
+
+    def __setstate__(self, state):
+        """Handle unpickling"""
+        self.__dict__.update(state)
 
     def physics_process(self, dt: float) -> None:
         pass

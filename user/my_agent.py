@@ -16,15 +16,14 @@
 
 import os
 import gdown
+import torch
 from typing import Optional
 from environment.agent import Agent
 from stable_baselines3 import PPO, A2C # Sample RL Algo imports
 from sb3_contrib import RecurrentPPO # Importing an LSTM
 
-# To run the sample TTNN model, you can uncomment the 2 lines below: 
-# import ttnn
-# from user.my_agent_tt import TTMLPPolicy
-
+# CUDA Configuration
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class SubmittedAgent(Agent):
     '''
@@ -36,24 +35,12 @@ class SubmittedAgent(Agent):
     ):
         super().__init__(file_path)
 
-        # To run a TTNN model, you must maintain a pointer to the device and can be done by 
-        # uncommmenting the line below to use the device pointer
-        # self.mesh_device = ttnn.open_mesh_device(ttnn.MeshShape(1,1))
-
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = PPO("MlpPolicy", self.env, verbose=0)
+            self.model = PPO("MlpPolicy", self.env, verbose=0, device=DEVICE)
             del self.env
         else:
-            self.model = PPO.load(self.file_path)
-
-        # To run the sample TTNN model during inference, you can uncomment the 5 lines below:
-        # This assumes that your self.model.policy has the MLPPolicy architecture defined in `train_agent.py` or `my_agent_tt.py`
-        # mlp_state_dict = self.model.policy.features_extractor.model.state_dict()
-        # self.tt_model = TTMLPPolicy(mlp_state_dict, self.mesh_device)
-        # self.model.policy.features_extractor.model = self.tt_model
-        # self.model.policy.vf_features_extractor.model = self.tt_model
-        # self.model.policy.pi_features_extractor.model = self.tt_model
+            self.model = PPO.load(self.file_path, device=DEVICE)
 
     def _gdown(self) -> str:
         data_path = "rl-model.zip"
