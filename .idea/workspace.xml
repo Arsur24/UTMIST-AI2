@@ -5,17 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="3aa24987-2ad7-446a-9819-a3a3e8ca488e" name="Changes" comment="added config file">
-      <change afterPath="$PROJECT_DIR$/.idea/csv-editor.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/environment/viz_runner.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/test_cuda.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/environment/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/environment/agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/environment/environment.py" beforeDir="false" afterPath="$PROJECT_DIR$/environment/environment.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/battle.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/battle.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/demo_match.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/demo_match.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/my_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/my_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/pvp_match.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/pvp_match.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/train_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/train_agent.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/TheoriesAndIdeas/braden.ipynb" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/TheoriesAndIdeas/general.ipynb" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/TheoriesAndIdeas/sophie.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/TheoriesAndIdeas/scratch.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/TheoriesAndIdeas/arthur.ipynb" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -38,12 +31,12 @@
     &quot;assignee&quot;: &quot;orangetheorange&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/Arsur24/UTMIST-AI2.git&quot;,
-    &quot;accountId&quot;: &quot;f6dea654-d43e-4bd9-a9bb-20d39388fb58&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/Arsur24/UTMIST-AI2.git",
+    "accountId": "490415aa-fe34-4aa0-b6ac-b446e9e3ee35"
   }
-}</component>
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 0
 }</component>
@@ -68,13 +61,14 @@
     "SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "SHELLCHECK.PATH": "C:\\Users\\orang\\AppData\\Roaming\\JetBrains\\PyCharm2025.2\\plugins\\Shell Script\\shellcheck.exe",
     "git-widget-placeholder": "main",
-    "last_opened_file_path": "C:/Users/moham/Documents/GitHub/UTMIST-AI2-2025",
+    "ignore.virus.scanning.warn.message": "true",
+    "last_opened_file_path": "C:/Users/Other (personal)/PycharmProjects/UTMIST-AI2/TheoriesAndIdeas",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "com.github.copilot.settings.customInstructions.CopilotInstructionsConfigurable",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -93,8 +87,8 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="SDK_NAME" value="Python 3.13 (UTMIST-AI2)" />
-      <option name="WORKING_DIRECTORY" value="C:\Users\orang\PycharmProjects\UTMIST-AI2\" />
+      <option name="SDK_NAME" value="Python 3.10 (UTMIST-AI2)" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/" />
       <option name="IS_MODULE_SDK" value="false" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
@@ -112,7 +106,6 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-3aa1da707db6-JavaScript-PY-252.27397.106" />
         <option value="bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106" />
       </set>
     </attachedChunks>
@@ -133,6 +126,7 @@
       <workItem from="1761451785235" duration="764000" />
       <workItem from="1761490597727" duration="99000" />
       <workItem from="1761490786532" duration="8565000" />
+      <workItem from="1761504639325" duration="1414000" />
     </task>
     <task id="LOCAL-00001" summary="Updated VENV">
       <option name="closed" value="true" />
