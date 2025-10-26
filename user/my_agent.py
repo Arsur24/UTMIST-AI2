@@ -16,10 +16,14 @@
 
 import os
 import gdown
+import torch
 from typing import Optional
 from environment.agent import Agent
 from stable_baselines3 import PPO, A2C # Sample RL Algo imports
 from sb3_contrib import RecurrentPPO # Importing an LSTM
+
+# CUDA Configuration
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class SubmittedAgent(Agent):
     '''
@@ -33,10 +37,10 @@ class SubmittedAgent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = PPO("MlpPolicy", self.env, verbose=0)
+            self.model = PPO("MlpPolicy", self.env, verbose=0, device=DEVICE)
             del self.env
         else:
-            self.model = PPO.load(self.file_path)
+            self.model = PPO.load(self.file_path, device=DEVICE)
 
     def _gdown(self) -> str:
         data_path = "rl-model.zip"

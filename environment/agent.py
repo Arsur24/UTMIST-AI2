@@ -298,10 +298,23 @@ class SaveHandler():
                         print("Invalid input, please enter 'y' or 'n'.")
 
                 if answer == 'n':
-                    raise ValueError('Please switch to SaveHandlerMode.FORCE or use a new run_name.')
-                print(f'Clearing {exp_path}...')
-                if os.path.exists(exp_path):
-                    shutil.rmtree(exp_path)
+                    # Switch to RESUME mode and continue from existing checkpoint
+                    print(f'Switching to RESUME mode - continuing from existing checkpoint in {exp_path}...')
+                    self.mode = SaveHandlerMode.RESUME
+                    # Get all model paths
+                    self.history = [os.path.join(exp_path, f) for f in os.listdir(exp_path) if os.path.isfile(os.path.join(exp_path, f))]
+                    # Filter any non .zip files
+                    self.history = [f for f in self.history if f.endswith('.zip')]
+                    if len(self.history) != 0:
+                        self.history.sort(key=lambda x: int(os.path.basename(x).split('_')[-2].split('.')[0]))
+                        if max_saved != -1: self.history = self.history[-max_saved:]
+                        print(f'Found {len(self.history)} existing checkpoint(s). Latest: {os.path.basename(self.history[-1])}')
+                    else:
+                        print(f'No checkpoints found in {exp_path}. Starting fresh training.')
+                else:
+                    print(f'Clearing {exp_path}...')
+                    if os.path.exists(exp_path):
+                        shutil.rmtree(exp_path)
             else:
                 print(f'{exp_path} empty or does not exist. Creating...')
 
@@ -553,8 +566,13 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         # Reset MalachiteEnv
         observations, info = self.raw_env.reset()
 
-        self.reward_manager.reset()
-
+        # Guard against None reward_manager (subprocess envs may not receive a RM)
+        if self.reward_manager is not None:
+            try:
+                self.reward_manager.reset()
+            except Exception as e:
+                print(f"Warning: reward_manager.reset() failed: {e}")
+ 
         # Select agent
         new_agent: Agent = self.opponent_cfg.on_env_reset()
         if new_agent is not None:
@@ -581,7 +599,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 # In[ ]:
 
 
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from tqdm import tqdm
 
 def run_match(agent_1: Agent | partial,
@@ -908,6 +926,9 @@ class SB3Agent(Agent):
 
 from sb3_contrib import RecurrentPPO
 
+# CUDA Configuration for environment agents
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class RecurrentPPOAgent(Agent):
 
     def __init__(
@@ -929,16 +950,19 @@ class RecurrentPPOAgent(Agent):
                 'share_features_extractor': True,
 
             }
-            self.model = RecurrentPPO("MlpLstmPolicy",
-                                      self.env,
-                                      verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=16,
-                                      ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
+            self.model = RecurrentPPO(
+                "MlpLstmPolicy",
+                self.env,
+                verbose=0,
+                n_steps=30*90*20,
+                batch_size=16,
+                ent_coef=0.05,
+                policy_kwargs=policy_kwargs,
+                device=DEVICE  # Use CUDA if available
+            )
             del self.env
         else:
-            self.model = RecurrentPPO.load(self.file_path)
+            self.model = RecurrentPPO.load(self.file_path, device=DEVICE)
 
     def reset(self) -> None:
         self.episode_starts = True
@@ -1001,8 +1025,24 @@ def train(agent: Agent,
           opponent_cfg: OpponentsCfg=OpponentsCfg(),
           resolution: CameraResolution=CameraResolution.LOW,
           train_timesteps: int=400_000,
-          train_logging: TrainLogging=TrainLogging.PLOT
+          train_logging: TrainLogging=TrainLogging.PLOT,
+          train_epochs: Optional[int]=None,
+          fast_mode: bool=False
           ):
+    """
+    Train an agent with either timesteps or epochs.
+
+    Args:
+        agent: Agent to train
+        reward_manager: Reward manager
+        save_handler: Save handler for checkpoints
+        opponent_cfg: Opponent configuration
+        resolution: Camera resolution
+        train_timesteps: Total timesteps to train (ignored if train_epochs is set)
+        train_logging: Logging mode
+        train_epochs: Number of complete games/epochs to train (overrides train_timesteps if set)
+        fast_mode: If True, runs games at 10x speed for quick testing (10 games per second)
+    """
     # Create environment
     env = SelfPlayWarehouseBrawl(reward_manager=reward_manager,
                                  opponent_cfg=opponent_cfg,
@@ -1010,6 +1050,16 @@ def train(agent: Agent,
                                  resolution=resolution
                                  )
     reward_manager.subscribe_signals(env.raw_env)
+
+    # Apply fast mode settings
+    if fast_mode:
+        # Reduce game length to 3 seconds and speed up to 10x
+        env.raw_env.max_timesteps = 90  # 3 seconds at 30 FPS = 90 timesteps per game
+        print(f"\n{'='*60}")
+        print(f"FAST MODE ENABLED - 10 games per second")
+        print(f"Each game: 90 timesteps (3 seconds)")
+        print(f"{'='*60}\n")
+
     if train_logging != TrainLogging.NONE:
         # Create log dir
         log_dir = f"{save_handler._experiment_path()}/" if save_handler is not None else "/tmp/gym/"
@@ -1019,10 +1069,79 @@ def train(agent: Agent,
         env = Monitor(env, log_dir)
 
     base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+
+    # Calculate timesteps based on epochs if specified
+    if train_epochs is not None:
+        if fast_mode:
+            # In fast mode, each game is 90 timesteps
+            train_timesteps = train_epochs * 90
+        else:
+            # Normal mode: average game is ~30*90 = 2700 timesteps
+            train_timesteps = train_epochs * 2700
+        print(f"\n{'='*60}")
+        print(f"Training for {train_epochs} epochs (approximately {train_timesteps:,} timesteps)")
+        print(f"{'='*60}\n")
+
     try:
         agent.get_env_info(base_env)
         base_env.on_training_start()
-        agent.learn(env, total_timesteps=train_timesteps, verbose=1)
+
+        # Create custom callback for visualization
+        from stable_baselines3.common.callbacks import BaseCallback
+
+        class VisualizationCallback(BaseCallback):
+            """Callback that runs visualization games periodically"""
+            def __init__(self, train_agent, viz_opponent, viz_interval_secs, viz_resolution):
+                super().__init__()
+                self.train_agent = train_agent
+                self.viz_opponent = viz_opponent
+                self.viz_interval_secs = viz_interval_secs
+                self.viz_resolution = viz_resolution
+                self.last_viz_time = time.time()
+                self.viz_count = 0
+
+            def _on_step(self) -> bool:
+                """Called after each training step"""
+                current_time = time.time()
+                elapsed = current_time - self.last_viz_time
+
+                # Run visualization every N seconds
+                if elapsed >= self.viz_interval_secs:
+                    self.viz_count += 1
+                    print(f"\n{'='*70}")
+                    print(f"🎮 VISUALIZATION #{self.viz_count} - Timestep: {self.num_timesteps:,}")
+                    print(f"{'='*70}")
+
+                    try:
+                        # Run demo match
+                        match_stats = run_match(
+                            agent_1=self.train_agent,
+                            agent_2=self.viz_opponent,
+                            max_timesteps=30*90,
+                            agent_1_name="Trained Agent",
+                            agent_2_name="Opponent",
+                            resolution=self.viz_resolution,
+                            train_mode=True
+                        )
+
+                        print(f"✓ Match Result: {match_stats.player1_result}")
+                        print(f"{'='*70}\n")
+                    except Exception as e:
+                        print(f"⚠ Visualization error: {e}")
+
+                    self.last_viz_time = current_time
+
+                return True
+
+        # Create visualization callback
+        viz_callback = VisualizationCallback(
+            train_agent=agent,
+            viz_opponent=partial(BasedAgent)(),
+            viz_interval_secs=90,
+            viz_resolution=resolution
+        )
+
+        agent.learn(env, total_timesteps=train_timesteps, verbose=1, callback=viz_callback)
         base_env.on_training_end()
     except KeyboardInterrupt:
         pass
@@ -1035,111 +1154,223 @@ def train(agent: Agent,
     if train_logging == TrainLogging.PLOT:
         plot_results(log_dir)
 
-## Run Human vs AI match function
-import pygame
-from pygame.locals import QUIT
 
-def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=30*90, resolution=CameraResolution.LOW):
-    pygame.init()
+def train_parallel(agent: Agent,
+          reward_manager: RewardManager,
+          save_handler: Optional[SaveHandler]=None,
+          opponent_cfg: OpponentsCfg=OpponentsCfg(),
+          resolution: CameraResolution=CameraResolution.LOW,
+          train_timesteps: int=400_000,
+          train_logging: TrainLogging=TrainLogging.PLOT,
+          n_envs: int=4,
+          train_epochs: Optional[int]=None,
+          fast_mode: bool=False,
+          visualization_interval: int=90,
+          custom_callback: Optional['BaseCallback']=None
+          ):
+    """
+    Enhanced training function with parallel environment support for better GPU utilization.
 
-    pygame.mixer.init()
+    Args:
+        agent: The agent to train
+        reward_manager: Manager for reward calculations
+        save_handler: Handler for saving checkpoints
+        opponent_cfg: Configuration for opponents
+        resolution: Camera resolution
+        train_timesteps: Total timesteps to train (ignored if train_epochs is set)
+        train_logging: Logging mode
+        n_envs: Number of parallel environments (default: 4 for better GPU utilization)
+        train_epochs: Number of complete games/epochs to train (overrides train_timesteps if set)
+        fast_mode: If True, runs games at 10x speed for quick testing (10 games per second per env)
+        visualization_interval: Seconds between visualization games (default: 90 seconds)
+    """
+    import torch
+    import time
+    from threading import Thread
 
-    # Load your soundtrack (must be .wav, .ogg, or supported format)
-    pygame.mixer.music.load("environment/assets/soundtrack.mp3")
+    # Check CUDA availability
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on device: {device}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Number of parallel environments: {n_envs}")
 
-    # Play it on loop: -1 = loop forever
-    pygame.mixer.music.play(-1)
+    # Calculate timesteps based on epochs if specified
+    if train_epochs is not None:
+        if fast_mode:
+            # In fast mode, each game is 90 timesteps
+            train_timesteps = train_epochs * 90
+            print(f"FAST MODE: Training for {train_epochs} epochs (approximately {train_timesteps:,} timesteps)")
+            print(f"Expected completion: ~{train_epochs / (10 * n_envs):.1f} seconds with {n_envs} parallel envs")
+        else:
+            # Normal mode: average game is ~30*90 = 2700 timesteps
+            train_timesteps = train_epochs * 2700
+            print(f"Training for {train_epochs} epochs (approximately {train_timesteps:,} timesteps)")
 
-    # Optional: set volume (0.0 to 1.0)
-    pygame.mixer.music.set_volume(0.2)
+    # Visualization function
+    def run_visualization(trained_agent, opponent_agent, viz_resolution):
+        """Run a demo game with current trained agent"""
+        try:
+            print(f"\n{'='*60}")
+            print(f"▶ RUNNING VISUALIZATION GAME")
+            print(f"{'='*60}")
 
-    resolutions = {
-        CameraResolution.LOW: (480, 720),
-        CameraResolution.MEDIUM: (720, 1280),
-        CameraResolution.HIGH: (1080, 1920)
-    }
-    
-    screen = pygame.display.set_mode(resolutions[resolution][::-1])  # Set screen dimensions
+            from environment.agent import run_match, CameraResolution
 
+            # Run a quick match with current agent
+            match_stats = run_match(
+                agent_1=trained_agent,
+                agent_2=opponent_agent,
+                max_timesteps=30*90,  # Full 90-second game
+                agent_1_name="Trained Agent",
+                agent_2_name="Opponent",
+                resolution=viz_resolution,
+                train_mode=True
+            )
 
-    pygame.display.set_caption("AI Squared - Player vs AI Demo")
+            print(f"\n{'='*60}")
+            print(f"✓ VISUALIZATION COMPLETE")
+            print(f"Match Result: {match_stats.player1_result}")
+            print(f"{'='*60}\n")
+        except Exception as e:
+            print(f"Visualization error: {e}")
 
-    clock = pygame.time.Clock()
+    # Create opponent for visualization
+    viz_opponent = partial(BasedAgent)()
 
-    # Initialize environment
-    env = WarehouseBrawl(resolution=resolution, train_mode=False)
-    observations, _ = env.reset()
-    obs_1 = observations[0]
-    obs_2 = observations[1]
+    # Track time for visualization
+    last_viz_time = time.time()
+    visualization_interval_seconds = visualization_interval
 
-    if not agent_1.initialized: agent_1.get_env_info(env)
-    if not agent_2.initialized: agent_2.get_env_info(env)
+    # --- Create a lightweight probe environment (non-vectorized) to initialize agent env info ---
+    # We need a concrete env (not a VecEnv) so Agent.get_env_info can read attributes like
+    # observation_space, obs_helper and act_helper. Construct a full SelfPlayWarehouseBrawl
+    # with the provided reward_manager/opponent_cfg/save_handler for probing, then close it.
+    try:
+        probe_env = SelfPlayWarehouseBrawl(
+            reward_manager=reward_manager,
+            opponent_cfg=opponent_cfg,
+            save_handler=save_handler,
+            resolution=resolution
+        )
+        # Subscribe reward manager signals to the raw environment so reward terms work during training
+        if reward_manager is not None:
+            reward_manager.subscribe_signals(probe_env.raw_env)
 
-    # Run the match loop
-    running = True
-    timestep = 0
-   # platform1 = env.objects["platform1"] #mohamed
-    #stage2 = env.objects["stage2"]
-    background_image = pygame.image.load('environment/assets/map/bg.jpg').convert() 
-    while running and timestep < max_timesteps:
-       
-        # Pygame event to handle real-time user input 
-       
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                running = False
-            if event.type == pygame.VIDEORESIZE:
-                 screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
-       
-        action_1 = agent_1.predict(obs_1)
+        # Instead of calling agent.get_env_info(probe_env) which may _initialize the SB3 model
+        # with a single-environment env, copy only the helper attributes required for agent logic
+        # and postpone actual SB3 model creation until after the vectorized env is created.
+        agent.observation_space = probe_env.observation_space
+        agent.obs_helper = probe_env.obs_helper
+        agent.action_space = probe_env.action_space
+        agent.act_helper = probe_env.act_helper
+        agent.env = None
+        agent.initialized = False
+    finally:
+        # Close probe env to release pygame/resources before launching subprocesses
+        try:
+            probe_env.close()
+        except Exception:
+            pass
 
-        # AI input
-        action_2 = agent_2.predict(obs_2)
+    # Create environment factory function
+    def make_env():
+        def _init():
+            # Create a lightweight SelfPlayWarehouseBrawl inside the subprocess to avoid capturing
+            # large or unpicklable objects (pygame surfaces, handlers) in the closure.
+            env = SelfPlayWarehouseBrawl(
+                # Do not pass reward_manager, opponent_cfg, or save_handler here so the factory
+                # function remains picklable. These can be set later if needed.
+                resolution=resolution
+            )
+            # Apply fast mode settings
+            if fast_mode:
+                env.raw_env.max_timesteps = 90  # 3 seconds at 30 FPS = 90 timesteps per game
+            return env
+        return _init
 
-        # Sample action space
-        full_action = {0: action_1, 1: action_2}
-        observations, rewards, terminated, truncated, info = env.step(full_action)
-        obs_1 = observations[0]
-        obs_2 = observations[1]
-
-        # Render the game
-        
-        img = env.render()
-        screen.blit(pygame.surfarray.make_surface(img), (0, 0))
-     
-        pygame.display.flip()
-
-        # Control frame rate (30 fps)
-        clock.tick(30)
-
-        # If the match is over (either terminated or truncated), stop the loop
-        if terminated or truncated:
-            running = False
-
-        timestep += 1
-
-    # Clean up pygame after match
-    pygame.quit()
-
-    # Return match stats
-    player_1_stats = env.get_stats(0)
-    player_2_stats = env.get_stats(1)
-
-    if player_1_stats.lives_left > player_2_stats.lives_left:
-        result = Result.WIN
-    elif player_1_stats.lives_left < player_2_stats.lives_left:
-        result = Result.LOSS
+    # Create vectorized environment for parallel training
+    if n_envs > 1 and torch.cuda.is_available():
+        print(f"Creating {n_envs} parallel environments for GPU-accelerated training...")
+        # Use top-level factory via functools.partial so the callables are picklable
+        env_fns = [partial(_create_selfplay_env, resolution=resolution, fast_mode=fast_mode) for _ in range(n_envs)]
+        env = SubprocVecEnv(env_fns)
     else:
-        result = Result.DRAW
-    
-    match_stats = MatchStats(
-        match_time=timestep / 30.0,
-        player1=player_1_stats,
-        player2=player_2_stats,
-        player1_result=result
-    )
+        print("Creating single environment (CPU mode or n_envs=1)...")
+        env = _create_selfplay_env(resolution, fast_mode)
 
-    # Close environment
-    env.close()
+    # Now that we have the (possibly vectorized) env, create the SB3 model using that env
+    # if the agent has not already created a model. This ensures the model's n_envs matches.
+    try:
+        desired_n_envs = getattr(env, 'num_envs', 1)
+        if hasattr(agent, 'model') and getattr(agent, 'model', None) is not None:
+            current_n_envs = getattr(agent.model, 'n_envs', 1)
+            if current_n_envs != desired_n_envs:
+                print(f"Agent model has {current_n_envs} env(s) but trainer needs {desired_n_envs}; recreating model...")
+                try:
+                    # Safely remove old model and create a new one bound to the vectorized env
+                    delattr(agent, 'model')
+                except Exception:
+                    agent.model = None
+                agent.env = env
+                if hasattr(agent, '_initialize'):
+                    agent._initialize()
+                agent.initialized = True
+        else:
+            # assign the env so _initialize can build the model correctly
+            agent.env = env
+            # Call the agent-specific initialization which should construct/load the SB3 model
+            if hasattr(agent, '_initialize'):
+                agent._initialize()
+            agent.initialized = True
+    except Exception as e:
+        print(f"Error initializing agent model with vectorized env: {e}")
+        raise
 
-    return match_stats
+    # Subscribe reward manager signals
+    if reward_manager is not None:
+        if hasattr(env, 'raw_env'):
+            reward_manager.subscribe_signals(env.raw_env)
+        elif hasattr(env, 'envs') and len(env.envs) > 0:
+            # For vectorized environments, subscribe to first env
+            reward_manager.subscribe_signals(env.envs[0].raw_env)
+
+    if train_logging != TrainLogging.NONE:
+        # Create log dir
+        log_dir = f"{save_handler._experiment_path()}/" if save_handler is not None else "/tmp/gym/"
+        os.makedirs(log_dir, exist_ok=True)
+
+        # For vectorized environments, wrap with VecMonitor
+        if n_envs > 1:
+            from stable_baselines3.common.vec_env import VecMonitor
+            env = VecMonitor(env, log_dir)
+        else:
+            env = Monitor(env, log_dir)
+
+    base_env = env.unwrapped if hasattr(env, 'unwrapped') else (env.envs[0] if hasattr(env, 'envs') else env)
+
+    try:
+        # Agent already initialized with a concrete probe environment earlier.
+        # Do not call get_env_info on a vectorized env (e.g., SubprocVecEnv) because
+        # it doesn't expose attributes like `obs_helper`. Proceed directly to learning.
+        agent.learn(env, total_timesteps=train_timesteps, verbose=1)
+        
+        # Start a background visualization thread that periodically saves the
+        # current model and launches a separate process to render a real-time
+        # match. This keeps training running uninterrupted while providing a
+        # concurrent visualization.
+        viz_stop_event = None
+        viz_thread = None
+        import threading
+        if custom_callback is None and save_handler is not None and visualization_interval is not None and visualization_interval > 0:
+            import tempfile, subprocess, sys
+            viz_stop_event = threading.Event()
+
+            def viz_worker():
+                while not viz_stop_event.wait(visualization_interval):
+                    try:
+                        # Save a temporary snapshot of the model
+                        tmpdir = tempfile.mkdtemp()
+                        model_path = os.path.join(tmpdir, 'viz_model.zip')
+                        try:
+

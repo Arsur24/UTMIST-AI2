@@ -1,9 +1,14 @@
-import pytest 
-from loguru import logger
-import importlib.util
+# Change working directory to project root to fix asset paths
 import os
 import sys
-from environment.agent import run_match , CameraResolution , gen_reward_manager
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(project_root)
+
+import pytest
+from loguru import logger
+import importlib.util
+from environment.agent import run_match, CameraResolution
+from user.train_agent import gen_reward_manager
 from user.utils import get_participant_elo, update_participant_elo, elo_update
 
 

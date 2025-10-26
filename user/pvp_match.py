@@ -1,8 +1,16 @@
 # import skvideo
 # import skvideo.io
+
+# Change working directory to project root to fix asset paths
+import os
+import sys
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(project_root)
+
 from environment.environment import RenderMode
-from environment.agent import SB3Agent, CameraResolution, RecurrentPPOAgent, BasedAgent, UserInputAgent, ConstantAgent, run_match, run_real_time_match, gen_reward_manager
-from user.my_agent import SubmittedAgent, ConstantAgent
+from environment.agent import SB3Agent, CameraResolution, RecurrentPPOAgent, BasedAgent, UserInputAgent, ConstantAgent, run_match, run_real_time_match
+from user.my_agent import SubmittedAgent
+from user.train_agent import gen_reward_manager
 
 reward_manager = gen_reward_manager()
 
