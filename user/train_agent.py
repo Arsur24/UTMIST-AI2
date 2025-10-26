@@ -27,6 +27,12 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from environment.agent import *
 from typing import Optional, Type, List, Tuple
 
+# Import reward configuration (robust import that works whether running as a script or package)
+try:
+    from user import rewards_config as rc
+except Exception:
+    import rewards_config as rc
+
 # -------------------------------------------------------------------------
 # ----------------------------- AGENT CLASSES -----------------------------
 # -------------------------------------------------------------------------
@@ -542,22 +548,31 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
 Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
+    # Read weights and params from rewards_config.CFG
+    weights = rc.CFG.get('weights', {})
+    danger_cfg = rc.CFG.get('danger_zone', {})
+    signals = rc.CFG.get('signals', {})
+
     reward_functions = {
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
-        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
+        'danger_zone_reward': RewTerm(
+            func=danger_zone_reward,
+            weight=weights.get('danger_zone_reward', 0.5),
+            params={'zone_penalty': danger_cfg.get('zone_penalty', 1), 'zone_height': danger_cfg.get('zone_height', 4.2)}
+        ),
+        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=weights.get('damage_interaction_reward', 1.0)),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
+        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=weights.get('penalize_attack_reward', -0.04), params={'desired_state': AttackState}),
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=weights.get('holding_more_than_3_keys', -0.01)),
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=8)),
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=15))
+        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=signals.get('on_win_reward', 50))),
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=signals.get('on_knockout_reward', 8))),
+        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=signals.get('on_combo_reward', 5))),
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=signals.get('on_equip_reward', 10))),
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=signals.get('on_drop_reward', 15)))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -568,6 +583,7 @@ def gen_reward_manager():
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 if __name__ == '__main__':
+
     # Create agent
     my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
