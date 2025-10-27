@@ -13,12 +13,18 @@ b) Continue training from a specific timestep given an input `file_path`
 # ----------------------------- IMPORTS -----------------------------
 # -------------------------------------------------------------------
 
-# Change working directory to project root to fix asset paths
+# Add project root to sys.path for imports (but don't change working directory yet)
 import os
 import sys
+
+# NOTE: Do NOT change working directory at import time. We'll change it only when the
+# script is executed as __main__ so subprocess imports (workers/visualizers) don't
+# repeatedly change/print the working directory.
+
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 os.chdir(project_root)
-print(f"Working directory: {os.getcwd()}")
 
 import torch
 import gymnasium as gym
@@ -31,11 +37,14 @@ from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-# Initialize pygame as early as possible
-pygame.init()
+# Do NOT call pygame.init() at import time; initialize it inside main when needed.
+# pygame will be initialized when running the script directly (see below).
 
 from environment.agent import *
 from typing import Optional, Type, List, Tuple
+
+# Import parallel training from user module
+from user.parallel_training import train_parallel
 
 # Import reward configuration (robust import that works whether running as a script or package)
 try:
@@ -49,29 +58,29 @@ except Exception:
 
 # Check if CUDA is available and set device
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {DEVICE}")
-if torch.cuda.is_available():
-    print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
-    print(f"CUDA Version: {torch.version.cuda}")
-    print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+# NOTE: Do not print device information at import time (subprocesses will import this module).
+# If you need to see device info, it will be printed once when running the script directly (__main__).
 
 # -------------------------------------------------------------------
 # ----------------------- VISUALIZATION CALLBACK --------------------
 # -------------------------------------------------------------------
 
 import time
+import subprocess
+import sys
 from stable_baselines3.common.callbacks import BaseCallback
 
 class VisualizationCallback(BaseCallback):
     """Callback that runs visualization games periodically during training"""
-    def __init__(self, train_agent, viz_opponent, viz_interval_secs, viz_resolution):
+    def __init__(self, train_agent, save_handler, viz_interval_secs, viz_resolution):
         super().__init__()
         self.train_agent = train_agent
-        self.viz_opponent = viz_opponent
+        self.save_handler = save_handler
         self.viz_interval_secs = viz_interval_secs
         self.viz_resolution = viz_resolution
         self.last_viz_time = time.time()
         self.viz_count = 0
+        self.viz_process = None
 
     def _on_step(self) -> bool:
         """Called after each training step"""
@@ -81,30 +90,103 @@ class VisualizationCallback(BaseCallback):
         # Run visualization every N seconds
         if elapsed >= self.viz_interval_secs:
             self.viz_count += 1
+            self.last_viz_time = current_time
+
             print(f"\n{'='*70}")
-            print(f"🎮 VISUALIZATION #{self.viz_count} - Timestep: {self.num_timesteps:,}")
+            print(f"🎮 LAUNCHING VISUALIZATION #{self.viz_count} - Timestep: {self.num_timesteps:,}")
             print(f"{'='*70}")
 
             try:
-                # Run demo match with rendering enabled
-                match_stats = run_match(
-                    agent_1=self.train_agent,
-                    agent_2=self.viz_opponent,
-                    max_timesteps=30*90,
-                    agent_1_name="Trained Agent",
-                    agent_2_name="Opponent",
-                    resolution=self.viz_resolution,
-                    train_mode=False  # Enable rendering to show pygame window
+                # Save current model to a temp snapshot
+                snapshot_path = f"temp_viz_snapshot_{self.viz_count}.zip"
+                self.train_agent.model.save(snapshot_path)
+
+                # Kill previous visualization if still running
+                if self.viz_process is not None and self.viz_process.poll() is None:
+                    self.viz_process.terminate()
+
+                # Launch visualization in a new process
+                # Create a simple Python script to run the visualization
+                viz_script = f"""
+import os
+import sys
+
+# Change to project root
+os.chdir(r'C:\\Users\\orang\\PycharmProjects\\UTMIST-AI2')
+sys.path.insert(0, r'C:\\Users\\orang\\PycharmProjects\\UTMIST-AI2')
+
+# Initialize pygame FIRST before any other imports
+import pygame
+pygame.init()
+
+from environment.agent import SB3Agent, BasedAgent, run_real_time_match, CameraResolution
+from functools import partial
+import torch
+
+print("Starting visualization process...")
+print(f"Loading model from: {snapshot_path}")
+
+# Set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Load the snapshot
+try:
+    agent = SB3Agent(file_path=r'{snapshot_path}')
+    agent.initialized = True
+    print("Model loaded successfully!")
+except Exception as e:
+    print(f"Error loading model: {{e}}")
+    import traceback
+    traceback.print_exc()
+    input("Press Enter to exit...")
+    sys.exit(1)
+
+# Run visualization match
+try:
+    print("Starting match visualization...")
+    match_stats = run_real_time_match(
+        agent_1=agent,
+        agent_2=partial(BasedAgent)(),
+        max_timesteps=30*30,
+        resolution=CameraResolution.LOW,
+        train_mode=False
+    )
+    print(f"Match result: {{match_stats.player1_result}}")
+    print("Match completed!")
+except Exception as e:
+    print(f"Visualization error: {{e}}")
+    import traceback
+    traceback.print_exc()
+    input("Press Enter to exit...")
+finally:
+    try:
+        pygame.quit()
+    except:
+        pass
+"""
+
+                # Write script to temp file
+                script_path = f"temp_viz_script_{self.viz_count}.py"
+                with open(script_path, 'w') as f:
+                    f.write(viz_script)
+
+                # Launch in new process
+                print(f"[DEBUG] Attempting to launch visualization subprocess...")
+                print(f"[DEBUG] Script path: {script_path}")
+                print(f"[DEBUG] Python executable: {sys.executable}")
+
+                self.viz_process = subprocess.Popen(
+                    [sys.executable, script_path],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
                 )
 
-                print(f"✓ Match Result: {match_stats.player1_result}")
+                print(f"✓ Visualization window launched in new process (PID: {self.viz_process.pid})")
                 print(f"{'='*70}\n")
+
             except Exception as e:
-                print(f"⚠ Visualization error: {e}")
+                print(f"⚠ Visualization launch error: {e}")
                 import traceback
                 traceback.print_exc()
-
-            self.last_viz_time = current_time
 
         return True
 
@@ -149,7 +231,7 @@ class SB3Agent(Agent):
 
     def _gdown(self) -> str:
         # Call gdown to your link
-        return
+        return None
 
     #def set_ignore_grad(self) -> None:
         #self.model.set_ignore_act_grad(True)
@@ -364,7 +446,7 @@ class MLPPolicy(nn.Module):
         # Hidden layer
         self.fc2 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32)
         # Output layer
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32)
+        self.fc3 = nn.Linear(hidden_dim, action_dim, dtype=torch.float32)
 
         # Move model to CUDA if available
         self.to(DEVICE)
@@ -385,12 +467,15 @@ class MLPPolicy(nn.Module):
 class MLPExtractor(BaseFeaturesExtractor):
     '''
     Class that defines an MLP Base Features Extractor
+    Note: This should output features (features_dim), NOT actions.
+    The policy and value heads will use these features to predict actions/values.
     '''
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
+        # Create MLP that outputs features_dim (not action_dim)
         self.model = MLPPolicy(
             obs_dim=observation_space.shape[0], 
-            action_dim=10,
+            action_dim=features_dim,  # Output features, not actions
             hidden_dim=hidden_dim,
         )
         # Model will be moved to CUDA in MLPPolicy's __init__
@@ -405,15 +490,15 @@ class MLPExtractor(BaseFeaturesExtractor):
     def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
         return dict(
             features_extractor_class=cls,
-            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
+            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim)
         )
     
 class CustomAgent(Agent):
-    def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
-        self.sb3_class = sb3_class
-        self.extractor = extractor
-        super().__init__(file_path)
-    
+    def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: Optional[Type[BaseFeaturesExtractor]] = None):
+         self.sb3_class = sb3_class
+         self.extractor = extractor
+         super().__init__(file_path)
+
     def _initialize(self) -> None:
         if self.file_path is None:
             # Compute batch size compatible with n_steps * n_envs
@@ -436,7 +521,7 @@ class CustomAgent(Agent):
 
     def _gdown(self) -> str:
         # Call gdown to your link
-        return
+        return None
 
     #def set_ignore_grad(self) -> None:
         #self.model.set_ignore_act_grad(True)
@@ -448,12 +533,13 @@ class CustomAgent(Agent):
     def save(self, file_path: str) -> None:
         self.model.save(file_path, include=['num_timesteps'])
 
-    def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0):
+    def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0, callback=None):
         self.model.set_env(env)
         self.model.verbose = verbose
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
+            callback=callback,
         )
 
 # --------------------------------------------------------------------------------
@@ -549,9 +635,10 @@ def danger_zone_reward(
     player: Player = env.objects["player"]
 
     # Apply penalty if the player is in the danger zone
+    # NOTE: Removed env.dt multiplication to match config weights
     reward = -zone_penalty if player.body.position.y >= zone_height else 0.0
 
-    return reward * env.dt
+    return reward
 
 def in_state_reward(
     env: WarehouseBrawl,
@@ -571,10 +658,11 @@ def in_state_reward(
     # Get player object from the environment
     player: Player = env.objects["player"]
 
-    # Apply penalty if the player is in the danger zone
+    # Apply penalty if the player is in the desired state
+    # NOTE: Removed env.dt multiplication to match config weights
     reward = 1 if isinstance(player.state, desired_state) else 0.0
 
-    return reward * env.dt
+    return reward
 
 def head_to_middle_reward(
     env: WarehouseBrawl,
@@ -621,9 +709,10 @@ def holding_more_than_3_keys(
     player: Player = env.objects["player"]
 
     # Apply penalty if the player is holding more than 3 keys
+    # NOTE: Removed env.dt multiplication to match config weights
     a = player.cur_action
     if (a > 0.5).sum() > 3:
-        return env.dt
+        return 1  # Will be multiplied by weight from config
     return 0
 
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
@@ -640,9 +729,16 @@ def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
     
 def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
-        if env.objects["player"].weapon == "Hammer":
+        weapon = env.objects["player"].weapon
+        if weapon == "Hammer":
+            # Only print from first env to avoid 10x duplication
+            if hasattr(env, 'games_done') and env.games_done <= 1:
+                print(f"  🎯 on_equip_reward: Equipped Hammer! +2.0")
             return 2.0
-        elif env.objects["player"].weapon == "Spear":
+        elif weapon == "Spear":
+            # Only print from first env
+            if hasattr(env, 'games_done') and env.games_done <= 1:
+                print(f"  🎯 on_equip_reward: Equipped Spear! +1.0")
             return 1.0
     return 0.0
 
@@ -693,15 +789,47 @@ def gen_reward_manager():
 # -------------------------------------------------------------------------
 # ----------------------------- MAIN FUNCTION -----------------------------
 # -------------------------------------------------------------------------
-'''
+''' 
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 if __name__ == '__main__':
+    # Change working directory to project root to fix asset paths (run-only)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(project_root)
+    print(f"Working directory: {os.getcwd()}")
+
+    # Print device information once when running as main
+    print(f"Using device: {DEVICE}")
+    if torch.cuda.is_available():
+        print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+
+    # Add debug print statements to ensure pygame window initialization is logged
+    print("Initializing pygame...")
+    try:
+        # Set SDL to use windib display driver on Windows for better compatibility
+        import os
+        os.environ['SDL_VIDEODRIVER'] = 'windib'
+
+        pygame.init()
+        print("✓ Pygame initialized successfully.")
+        print(f"  Pygame version: {pygame.version.ver}")
+        try:
+            print(f"  Display driver: {pygame.display.get_driver()}")
+        except Exception:
+            print(f"  Display driver: (could not detect)")
+    except Exception as e:
+        print(f"✗ Pygame initialization error: {e}")
+        print("  Continuing without pygame display support...")
+        import traceback
+        traceback.print_exc()
 
     # ===== CUDA CONFIGURATION =====
     # Enable parallel training if CUDA is available
     USE_PARALLEL_TRAINING = torch.cuda.is_available()
-    N_PARALLEL_ENVS = 4  # Number of parallel environments (reduced to see visualization)
+    # USE_PARALLEL_TRAINING = False
+    N_PARALLEL_ENVS = 10  # Number of parallel environments (use 10 to avoid system instability)
 
     # Adjust batch size and n_steps for parallel training
     if USE_PARALLEL_TRAINING:
@@ -737,8 +865,8 @@ if __name__ == '__main__':
         save_freq=100_000, # Save frequency
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
-        run_name='experiment_9',
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+        run_name='experiment_10',  # Changed to avoid prompt
+        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
@@ -753,41 +881,57 @@ if __name__ == '__main__':
     # Quick smoke-test configuration (change back for full runs)
     TRAIN_EPOCHS = 4  # Train for 4 complete games/matches for quick testing
     FAST_MODE = True  # Fast mode: shortened games (90 timesteps) and faster execution
-    VISUALIZATION_INTERVAL = 10  # Run visualization game every 10 seconds
+    VISUALIZATION_INTERVAL = 30  # Run visualization game every 30 seconds
+    SKIP_INITIAL_VIZ = True  # Skip initial visualization to start training immediately
 
-    # ===== SHOW INITIAL UNTRAINED AGENT =====
-    print(f"\n{'='*70}")
-    print(f"🎮 INITIAL VISUALIZATION - Untrained Agent")
-    print(f"{'='*70}")
-    try:
-        # Use a lightweight preview agent for visualization so we don't construct
-        # the SB3 model (which would bind to a single env). RandomAgent represents
-        # an "untrained" policy for quick visual checks. We run the real-time
-        # pygame match so a window appears.
-        preview_agent = RandomAgent()
-        initial_match = run_real_time_match(
-            agent_1=preview_agent,
-            agent_2=BasedAgent(),
-            max_timesteps=30*90,
-            resolution=CameraResolution.LOW
-        )
-        print(f"✓ Initial Real-time Match Result: {initial_match.player1_result}")
+    # Match durations (frames). Use 30 frames per second as a convention.
+    FRAMES_PER_SECOND = 30
+    SECONDS_PER_MATCH = 30  # 30 seconds per match
+    MATCH_MAX_TIMESTEPS = FRAMES_PER_SECOND * SECONDS_PER_MATCH
+
+    # ===== SHOW INITIAL UNTRAINED AGENT (Optional) =====
+    if not SKIP_INITIAL_VIZ:
+         print(f"\n{'='*70}")
+         print(f"🎮 INITIAL VISUALIZATION - Untrained Agent")
+         print(f"{'='*70}")
+         try:
+             # Use a lightweight preview agent for visualization so we don't construct
+             # the SB3 model (which would bind to a single env). RandomAgent represents
+             # an "untrained" policy for quick visual checks. We run the real-time
+             # pygame match so a window appears.
+             preview_agent = RandomAgent()
+             # Dynamically import the realtime visualizer to avoid circular import issues
+             try:
+                 import importlib
+                 env_agent = importlib.import_module('environment.agent')
+                 rtm = getattr(env_agent, 'run_real_time_match', None)
+             except Exception:
+                 rtm = None
+
+             if rtm is None:
+                 raise ImportError('run_real_time_match not available')
+
+             initial_match = rtm(
+                 agent_1=preview_agent,
+                 agent_2=BasedAgent(),
+                 max_timesteps=MATCH_MAX_TIMESTEPS,
+                 resolution=CameraResolution.LOW
+             )
+             print(f"✓ Initial Real-time Match Result: {initial_match.player1_result}")
+             print(f"{'='*70}\n")
+         except Exception as e:
+             print(f"⚠ Initial visualization error: {e}")
+             import traceback
+             traceback.print_exc()
+    else:
+        print(f"\n{'='*70}")
+        print(f"⏩ STARTING TRAINING")
+        print(f"   Visualization windows will pop up every {VISUALIZATION_INTERVAL}s in separate windows")
+        print(f"   Each window shows a match with the current training progress")
         print(f"{'='*70}\n")
-    except Exception as e:
-        print(f"⚠ Initial visualization error: {e}")
-        import traceback
-        traceback.print_exc()
 
     # Use parallel training if CUDA is available, otherwise use standard training
     if USE_PARALLEL_TRAINING:
-        # Create visualization callback
-        viz_callback = VisualizationCallback(
-            train_agent=my_agent,
-            viz_opponent=partial(BasedAgent)(),
-            viz_interval_secs=VISUALIZATION_INTERVAL,
-            viz_resolution=CameraResolution.LOW
-        )
-
         train_parallel(
             my_agent,
             reward_manager,
@@ -798,8 +942,7 @@ if __name__ == '__main__':
             n_envs=N_PARALLEL_ENVS,  # Parallel environments for GPU acceleration
             train_epochs=TRAIN_EPOCHS,  # Train for 4 epochs
             fast_mode=FAST_MODE,  # Fast mode for quick testing
-            visualization_interval=VISUALIZATION_INTERVAL,  # Visualization every 90 seconds
-            custom_callback=viz_callback  # Pass callback for visualization
+            show_live_training=True  # Show real-time game visualization with rewards
         )
     else:
         train(
@@ -808,7 +951,10 @@ if __name__ == '__main__':
             save_handler,
             opponent_cfg,
             CameraResolution.LOW,
-            train_logging=TrainLogging.PLOT,
-            train_epochs=TRAIN_EPOCHS,  # Train for 4 epochs
-            fast_mode=FAST_MODE  # Fast mode for quick testing
+            train_logging=TrainLogging.PLOT
         )
+
+    print(f"\n{'='*70}")
+    print(f"✅ ALL TRAINING AND DEMO MATCHES COMPLETE!")
+    print(f"{'='*70}\n")
+
