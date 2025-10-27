@@ -1,0 +1,9 @@
+Day 1
+Setup environment and initialized project repository
+Setup interpreter, python packages and version control system
+Day 2
+CUDA support for GPU acceleration
+Setup PyTorch with CUDA
+Parallel training with subprocesses for efficiency and speed
+Realtime visualization of the in game training process
+debug and output monitoring the reward applied to the agent
