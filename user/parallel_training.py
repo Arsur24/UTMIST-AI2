@@ -14,196 +14,65 @@ import glob
 from stable_baselines3.common import vec_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import PPO
 
 from environment.agent import (
     Agent, SelfPlayWarehouseBrawl, RewardManager,
-    SaveHandler, OpponentsCfg, run_match, BasedAgent,
-    CameraResolution, TrainLogging
+    SaveHandler, OpponentsCfg, run_match, run_real_time_match,
+    BasedAgent, CameraResolution, TrainLogging
 )
 
 import pygame
 
 
-class LiveGameVisualizer:
-    """Real-time game visualization for training"""
-    def __init__(self, agent, reward_manager, save_handler, resolution=CameraResolution.LOW):
+class DemoMatchCallback(BaseCallback):
+    """Callback that runs demo matches after checkpoints are saved"""
+    def __init__(self, agent, save_handler, demo_interval_steps=10000, verbose=0):
+        super().__init__(verbose)
         self.agent = agent
-        self.reward_manager = reward_manager
         self.save_handler = save_handler
-        self.resolution = resolution
-        self.running = True
-        self.latest_timestep = 0
+        self.demo_interval_steps = demo_interval_steps
+        self.last_demo_timesteps = 0
+        self.demo_count = 0
 
-    def start(self):
-        """Start visualization in a daemon thread"""
-        self.thread = threading.Thread(target=self._run_visualization, daemon=True)
-        self.thread.start()
+    def _on_step(self) -> bool:
+        """Called after each training step"""
+        # Check if it's time for a demo (every demo_interval_steps)
+        if self.num_timesteps - self.last_demo_timesteps >= self.demo_interval_steps:
+            self.demo_count += 1
+            self.last_demo_timesteps = self.num_timesteps
 
-    def _run_visualization(self):
-        """Run the actual game visualization during training"""
-        try:
-            import os
-            os.environ['SDL_VIDEODRIVER'] = 'windib'
+            print(f"\n{'='*70}")
+            print(f"🎮 DEMO MATCH #{self.demo_count} - After {self.num_timesteps:,} timesteps")
+            print(f"{'='*70}")
 
-            from environment.environment import WarehouseBrawl
-            from user.train_agent import CustomAgent as VizAgent, MLPExtractor, BasedAgent
-
-            pygame.init()
-
-            # Initialize display
-            resolutions = {
-                CameraResolution.LOW: (480, 720),
-                CameraResolution.MEDIUM: (720, 1280),
-                CameraResolution.HIGH: (1080, 1920)
-            }
-            screen = pygame.display.set_mode(resolutions[self.resolution][::-1])
-            pygame.display.set_caption("🎮 Training Visualization")
-            clock = pygame.time.Clock()
-
-            # Create visualization match environment (simple, not using save_handler)
-            env = WarehouseBrawl(resolution=self.resolution, train_mode=False)
-
-            # Use BasedAgent vs BasedAgent for visualization (no model loading issues)
-            viz_agent = BasedAgent()
-            opponent = BasedAgent()
-
-            observations, _ = env.reset()
-            obs_1 = observations[0]
-            obs_2 = observations[1]
-
-            if not viz_agent.initialized: viz_agent.get_env_info(env)
-            if not opponent.initialized: opponent.get_env_info(env)
-
-            # Subscribe reward manager signals if available
-            if self.reward_manager:
-                self.reward_manager.reset()
-                self.reward_manager.subscribe_signals(env)
-
-            total_reward = 0.0
-            timestep = 0
-            frame_count = 0
-            last_reward_reason = ""
-            last_reward_value = 0.0
-            reward_display_timer = 0
-
-            while self.running:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        self.running = False
-
-                # Get actions
-                action_1 = viz_agent.predict(obs_1)
-                action_2 = opponent.predict(obs_2)
-
-                # Step environment
-                full_action = {0: action_1, 1: action_2}
-                observations, rewards, terminated, truncated, info = env.step(full_action)
-                obs_1 = observations[0]
-                obs_2 = observations[1]
-
-                # Calculate reward using reward_manager
-                if self.reward_manager:
-                    reward = self.reward_manager.process(env, 1/30.0)
-
-                    # Get the actual reward breakdown from the environment logger
-                    log = env.logger[0] if hasattr(env, 'logger') and len(env.logger) > 0 else {}
-
-                    # Determine reward reason from actual values
-                    if reward >= 50:
-                        last_reward_reason = "on_win_reward: +50"
-                    elif reward >= 15:
-                        last_reward_reason = "on_drop_reward: +15"
-                    elif reward >= 10:
-                        last_reward_reason = "on_equip_reward: +10"
-                    elif reward >= 8:
-                        last_reward_reason = "on_knockout_reward: +8"
-                    elif reward >= 5:
-                        last_reward_reason = "on_combo_reward: +5"
-                    elif reward > 1.0:
-                        last_reward_reason = "damage_interaction_reward: +1.0"
-                    elif reward > 0.5:
-                        last_reward_reason = "danger_zone_reward: +0.5"
-                    elif reward > 0:
-                        last_reward_reason = f"positive reward: {reward:+.4f}"
-                    elif reward < -0.5:
-                        last_reward_reason = "danger_zone_reward: -0.5"
-                    elif reward < -0.04:
-                        last_reward_reason = "penalize_attack_reward: -0.04"
-                    elif reward < -0.01:
-                        last_reward_reason = "holding_more_than_3_keys: -0.01"
-                    elif reward < 0:
-                        last_reward_reason = f"penalty: {reward:+.4f}"
-                    else:
-                        last_reward_reason = "neutral"
-
-                    last_reward_value = reward
-                    reward_display_timer = 15  # Display for 15 frames
-
-                    # Print to terminal IMMEDIATELY when reward changes
-                    if reward != 0:
-                        print(f"🎮 Viz: reward of {reward:+.4f} for {last_reward_reason}")
-                else:
-                    reward = rewards[0]
-                    last_reward_reason = "no_reward_manager"
-
-                total_reward += reward
-
-                # Render game
-                try:
-                    img = env.render()
-                    img_surface = pygame.surfarray.make_surface(img)
-                    screen.blit(img_surface, (0, 0))
-                except Exception as e:
-                    pass
-
-                # Draw reward info on screen
-                font = pygame.font.Font(None, 24)
-                small_font = pygame.font.Font(None, 20)
-
-                # Current reward
-                reward_text = font.render(f"Reward: {reward:+.4f}", True, (0, 255, 0) if reward > 0 else (255, 100, 100))
-                total_text = font.render(f"Total: {total_reward:+.2f}", True, (255, 255, 0))
-                frame_text = font.render(f"Frame: {frame_count}", True, (100, 200, 255))
-
-                screen.blit(reward_text, (10, 10))
-                screen.blit(total_text, (10, 40))
-                screen.blit(frame_text, (10, 70))
-
-                # Display reward reason
-                if reward_display_timer > 0:
-                    reason_text = small_font.render(f"Reason: {last_reward_reason}", True, (200, 200, 100))
-                    screen.blit(reason_text, (10, 105))
-                    reward_display_timer -= 1
-
-
-                pygame.display.flip()
-                clock.tick(30)
-
-                if terminated or truncated:
-                    observations, _ = env.reset()
-                    obs_1 = observations[0]
-                    obs_2 = observations[1]
-                    if self.reward_manager:
-                        self.reward_manager.reset()
-                    total_reward = 0.0
-                    print(f"🎮 Viz: Episode reset at frame {frame_count}")
-
-                frame_count += 1
-
-        except Exception as e:
-            print(f"⚠ Visualization error: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
             try:
-                pygame.quit()
-            except:
-                pass
+                # Import here to avoid circular imports
+                from user.train_agent import BasedAgent
 
-    def stop(self):
-        """Stop visualization"""
-        self.running = False
+                print(f"Opening pygame window for demo match...")
+
+                # Run REAL-TIME demo match (shows actual pygame window!)
+                match_stats = run_real_time_match(
+                    agent_1=self.agent,
+                    agent_2=BasedAgent(),
+                    max_timesteps=2700,  # 90 seconds at 30 FPS
+                    resolution=CameraResolution.LOW,
+                )
+
+                print(f"✓ Demo Match Result: {match_stats.player1_result}")
+                print(f"  Match time: {match_stats.match_time:.1f}s")
+                print(f"  Player 1 lives: {match_stats.player1.lives_left}")
+                print(f"  Player 2 lives: {match_stats.player2.lives_left}")
+                print(f"{'='*70}\n")
+
+            except Exception as e:
+                print(f"⚠ Demo match error: {e}")
+                import traceback
+                traceback.print_exc()
+
+        return True  # Continue training
 
 
 def train_parallel(
@@ -214,10 +83,10 @@ def train_parallel(
     resolution: CameraResolution = CameraResolution.LOW,
     train_timesteps: int = 400_000,
     train_logging: TrainLogging = TrainLogging.PLOT,
-    n_envs: int = 10,
+    n_envs: int = 16,
     train_epochs: Optional[int] = None,
     fast_mode: bool = False,
-    show_live_training: bool = False
+    demo_interval_steps: int = 10000,  # Run demo match every 10k steps
 ):
     """
     Train agent with parallel environments using CUDA acceleration.
@@ -230,19 +99,14 @@ def train_parallel(
         resolution: Camera resolution
         train_timesteps: Total timesteps (ignored if train_epochs is set)
         train_logging: Logging mode
-        n_envs: Number of parallel environments
+        n_envs: Number of parallel environments (default changed to 16 for ~16x speedup target)
         train_epochs: Number of epochs (overrides train_timesteps)
         fast_mode: Fast mode for quick testing
         show_live_training: Show live pygame window during training
     """
 
-    # Start live game visualization in background thread
+    # DON'T start visualizer yet - must create subprocesses first to avoid pickling pygame objects!
     visualizer = None
-    if show_live_training:
-        print("\n🎮 Starting live game visualization in background...")
-        visualizer = LiveGameVisualizer(agent, reward_manager, save_handler, resolution)
-        visualizer.start()
-        time.sleep(2)  # Give pygame time to initialize
 
     # ============================================================
     # 1. Device info
@@ -254,7 +118,7 @@ def train_parallel(
     print(f"Training on device: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"Parallel environments: {n_envs}")
+    print(f"Parallel environments: {n_envs} (default set to 16 for target ~16x speedup)")
     print(f"{'=' * 60}\n")
 
     # ============================================================
@@ -344,81 +208,38 @@ def train_parallel(
         probe_env.close()
 
     # ============================================================
-    # 6. Training loop with epoch-based demo matches
+    # 6. CONTINUOUS TRAINING (no epoch resets!)
     # ============================================================
     try:
-        print("\n🚀 STARTING TRAINING - CustomAgent")
+        print("\n🚀 STARTING CONTINUOUS TRAINING")
 
-        # Calculate timesteps per epoch
+        # Calculate total timesteps
         if train_epochs is not None:
             if fast_mode:
-                timesteps_per_epoch = 90  # 90 timesteps per fast mode game
+                train_timesteps = train_epochs * 90  # 90 timesteps per fast mode game
             else:
-                timesteps_per_epoch = 2700  # 2700 timesteps per normal game
+                train_timesteps = train_epochs * 2700  # 2700 timesteps per normal game
+            print(f"Training for {train_timesteps:,} total timesteps ({train_epochs} games worth)")
         else:
-            timesteps_per_epoch = train_timesteps
+            print(f"Training for {train_timesteps:,} total timesteps")
 
-        # Train epoch by epoch
-        current_epoch = 0
-        total_epochs = train_epochs if train_epochs is not None else 1
+        print(f"Parallel environments: {n_envs}")
+        print(f"Expected wall-clock speedup: ~{n_envs}x (if GPU/compute is bottleneck)")
+        print(f"Demo matches will run every {demo_interval_steps:,} timesteps")
+        print(f"\n{'='*70}\n")
 
-        for epoch in range(total_epochs):
-            current_epoch = epoch + 1
-            print(f"\n{'='*70}")
-            print(f"🎮 EPOCH {current_epoch}/{total_epochs} - Training")
-            print(f"{'='*70}\n")
+        # Create demo match callback
+        demo_callback = DemoMatchCallback(
+            agent=agent,
+            save_handler=save_handler,
+            demo_interval_steps=demo_interval_steps,
+            verbose=1
+        )
 
-            # Train for one epoch
-            agent.learn(env=env, total_timesteps=timesteps_per_epoch, verbose=1)
+        # ONE CONTINUOUS LEARN CALL with demo callback - no breaks, no resets, just pure training
+        agent.learn(env=env, total_timesteps=train_timesteps, verbose=1, callback=demo_callback)
 
-            # Save checkpoint after epoch
-            if save_handler:
-                save_handler.num_timesteps = agent.get_num_timesteps()
-                save_handler.save_agent()
-                print(f"✓ Checkpoint saved at epoch {current_epoch}\n")
-
-            # Run demo match after each epoch (ACTUAL GAME RENDERING)
-            print(f"\n{'='*70}")
-            print(f"🎮 DEMO MATCH - After Epoch {current_epoch}")
-            print(f"   (Real game will be displayed)")
-            print(f"{'='*70}\n")
-
-            try:
-                from environment.agent import run_match
-                from user.train_agent import CustomAgent as DemoCustomAgent, MLPExtractor
-
-                # Load the just-trained agent checkpoint
-                checkpoint_path = save_handler._checkpoint_path() if save_handler else None
-                if checkpoint_path:
-                    # Find the latest model file
-                    model_files = glob.glob(f"{checkpoint_path}/*.zip")
-                    if model_files:
-                        latest_model = max(model_files, key=os.path.getctime)
-                        print(f"Loading latest checkpoint: {latest_model}")
-
-                        agent_1 = DemoCustomAgent(sb3_class=PPO, extractor=MLPExtractor, file_path=latest_model)
-                        agent_2 = DemoCustomAgent(sb3_class=PPO, extractor=MLPExtractor, file_path=latest_model)
-
-                        # Run REAL match with pygame rendering (like demo_match.py)
-                        print("Starting match visualization with PYGAME rendering...\n")
-                        match_result = run_match(
-                            agent_1=agent_1,
-                            agent_2=agent_2,
-                            max_timesteps=2700,  # Full 90-second match
-                            resolution=resolution,
-                            video_path=None
-                        )
-
-                        print(f"\n✓ Demo Match Complete!")
-                        print(f"  Result: {match_result.result}")
-                        print(f"  Agent 1 HP: {match_result.player1_hp}")
-                        print(f"  Agent 2 HP: {match_result.player2_hp}\n")
-            except Exception as demo_error:
-                print(f"⚠ Demo match error after epoch {current_epoch}: {demo_error}")
-                import traceback
-                traceback.print_exc()
-
-        print("\n✓ TRAINING COMPLETE\n")
+        print("\n✓ CONTINUOUS TRAINING COMPLETE\n")
 
     except Exception as e:
         print(f"Error during training: {e}")

@@ -743,9 +743,13 @@ def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
     return 0.0
 
 def on_drop_reward(env: WarehouseBrawl, agent: str) -> float:
+    """
+    Penalize the player for dropping weapons.
+    This signal fires when player drops a weapon, so returning a negative value penalizes it.
+    """
     if agent == "player":
-        if env.objects["player"].weapon == "Punch":
-            return -1.0
+        # Penalize ANY weapon drop (signal fires when weapon is dropped)
+        return -1.0
     return 0.0
 
 def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
@@ -866,7 +870,7 @@ if __name__ == '__main__':
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
         run_name='experiment_10',  # Changed to avoid prompt
-        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
+        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
@@ -877,10 +881,10 @@ if __name__ == '__main__':
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
-    # Training configuration
-    # Quick smoke-test configuration (change back for full runs)
-    TRAIN_EPOCHS = 4  # Train for 4 complete games/matches for quick testing
-    FAST_MODE = True  # Fast mode: shortened games (90 timesteps) and faster execution
+    # Training configuration - CONTINUOUS LEARNING (not epochs!)
+    # Set total timesteps for how long you want to train (no artificial epochs)
+    TRAIN_TIMESTEPS = 100_000  # 100k timesteps = continuous training, agent improves throughout
+    FAST_MODE = False  # False = full 90-second matches for proper training
     VISUALIZATION_INTERVAL = 30  # Run visualization game every 30 seconds
     SKIP_INITIAL_VIZ = True  # Skip initial visualization to start training immediately
 
@@ -940,11 +944,27 @@ if __name__ == '__main__':
             CameraResolution.LOW,
             train_logging=TrainLogging.PLOT,
             n_envs=N_PARALLEL_ENVS,  # Parallel environments for GPU acceleration
-            train_epochs=TRAIN_EPOCHS,  # Train for 4 epochs
-            fast_mode=FAST_MODE,  # Fast mode for quick testing
-            show_live_training=True  # Show real-time game visualization with rewards
+            train_timesteps=TRAIN_TIMESTEPS,  # Continuous training for this many timesteps
+            train_epochs=None,  # NO EPOCHS - continuous learning!
+            fast_mode=FAST_MODE,
+            demo_interval_steps=10000  # Run demo match every 10,000 timesteps
         )
     else:
+        # Attempt to start the visualizer in background so CPU training still shows a GUI
+        try:
+            import threading
+            from user import train_vis
+
+            # Start visualization-only mode in a daemon thread so it won't block training
+            vis_thread = threading.Thread(
+                target=lambda: train_vis.run_visualization_only(resolution=CameraResolution.LOW, run_time=None),
+                daemon=True,
+            )
+            vis_thread.start()
+            print("Started background visualization (user.train_vis.run_visualization_only).")
+        except Exception as e:
+            print(f"Could not start background visualizer: {e}")
+
         train(
             my_agent,
             reward_manager,
@@ -957,4 +977,3 @@ if __name__ == '__main__':
     print(f"\n{'='*70}")
     print(f"✅ ALL TRAINING AND DEMO MATCHES COMPLETE!")
     print(f"{'='*70}\n")
-

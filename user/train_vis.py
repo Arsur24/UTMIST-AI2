@@ -85,10 +85,27 @@ class LiveGameVisualizer:
             last_reward_value = 0.0
             reward_display_timer = 0
 
+            # Enforce real-time stepping (no speed-up): use env.fps if available
+            target_fps = getattr(env, 'fps', 30)
+            target_dt = 1.0 / target_fps
+            last_step_time = time.perf_counter()
+
             while self.running:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
+
+                # Throttle stepping to real-time based on target_dt
+                now = time.perf_counter()
+                elapsed = now - last_step_time
+                if elapsed < target_dt:
+                    # Still wait until next physics step; but handle display updates and events
+                    # Cap the loop rate so we don't spin excessively
+                    clock.tick(int(target_fps))
+                    continue
+
+                # Perform a single environment step (real-time)
+                last_step_time = now
 
                 # Get actions
                 action_1 = viz_agent.predict(obs_1)
@@ -100,9 +117,9 @@ class LiveGameVisualizer:
                 obs_1 = observations[0]
                 obs_2 = observations[1]
 
-                # Calculate reward using reward_manager
+                # Calculate reward using reward_manager with actual dt
                 if self.reward_manager:
-                    reward = self.reward_manager.process(env, 1/30.0)
+                    reward = self.reward_manager.process(env, target_dt)
 
                     # Get the actual reward breakdown from the environment logger
                     log = env.logger[0] if hasattr(env, 'logger') and len(env.logger) > 0 else {}
@@ -136,7 +153,7 @@ class LiveGameVisualizer:
                         last_reward_reason = "neutral"
 
                     last_reward_value = reward
-                    reward_display_timer = 15  # Display for 15 frames
+                    reward_display_timer = int(target_fps * 0.5)  # Display for half a second
 
                     # Print to terminal IMMEDIATELY when reward changes
                     if reward != 0:
@@ -176,7 +193,8 @@ class LiveGameVisualizer:
 
 
                 pygame.display.flip()
-                clock.tick(30)
+                # Cap display to target fps
+                clock.tick(int(target_fps))
 
                 if terminated or truncated:
                     observations, _ = env.reset()
