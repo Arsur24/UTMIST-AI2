@@ -501,19 +501,30 @@ class CustomAgent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            # Compute batch size compatible with n_steps * n_envs
-            N_STEPS = 30 * 90 * 3
+            # Improved hyperparameters for stable learning
+            N_STEPS = 30 * 90 * 3  # 8100 steps per rollout
             n_envs = getattr(self.env, 'num_envs', 1)
-            computed_batch = N_STEPS * n_envs
+
+            # Make batch_size a factor of total rollout (n_steps * n_envs)
+            total_rollout = N_STEPS * n_envs
+            # Use power-of-2 batch sizes for better GPU utilization
+            batch_size = 256 if total_rollout >= 256 else 128
+
             self.model = self.sb3_class(
                 "MlpPolicy",
                 self.env,
-                policy_kwargs=self.extractor.get_policy_kwargs(),
+                policy_kwargs=self.extractor.get_policy_kwargs(features_dim=128, hidden_dim=128),
                 verbose=0,
                 n_steps=N_STEPS,
-                batch_size=computed_batch,
-                ent_coef=0.01,
-                device=DEVICE  # Use CUDA if available
+                batch_size=batch_size,
+                n_epochs=10,                    # More epochs per update for better learning
+                learning_rate=3e-4,             # Lower learning rate for stability
+                ent_coef=0.02,                  # Higher entropy for better exploration
+                clip_range=0.2,                 # Standard PPO clip range
+                vf_coef=0.5,                    # Value function coefficient
+                max_grad_norm=0.5,              # Gradient clipping for stability
+                gae_lambda=0.95,                # GAE parameter for advantage estimation
+                device=DEVICE
             )
             del self.env
         else:
@@ -866,7 +877,7 @@ if __name__ == '__main__':
     # Set save settings here:
     save_handler = SaveHandler(
         agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
+        save_freq=20_000, # Save every 20k steps for better tracking
         max_saved=40, # Maximum number of saved models
         save_path='checkpoints', # Save path
         run_name='experiment_10',  # Changed to avoid prompt
@@ -875,15 +886,15 @@ if __name__ == '__main__':
 
     # Set opponent settings here:
     opponent_specification = {
-                    'self_play': (8, selfplay_handler),
-                    'constant_agent': (0.5, partial(ConstantAgent)),
-                    'based_agent': (1.5, partial(BasedAgent)),
+                    'self_play': (6, selfplay_handler),        # Reduced self-play weight
+                    'constant_agent': (1.0, partial(ConstantAgent)),  # More easy opponents
+                    'based_agent': (3.0, partial(BasedAgent)),        # More challenging opponents
                 }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
     # Training configuration - CONTINUOUS LEARNING (not epochs!)
     # Set total timesteps for how long you want to train (no artificial epochs)
-    TRAIN_TIMESTEPS = 100_000  # 100k timesteps = continuous training, agent improves throughout
+    TRAIN_TIMESTEPS = 300_000  # 300k timesteps for better long-term learning
     FAST_MODE = False  # False = full 90-second matches for proper training
     VISUALIZATION_INTERVAL = 30  # Run visualization game every 30 seconds
     SKIP_INITIAL_VIZ = True  # Skip initial visualization to start training immediately
