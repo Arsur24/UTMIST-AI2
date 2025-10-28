@@ -222,7 +222,8 @@ class SB3Agent(Agent):
                 verbose=0,
                 n_steps=N_STEPS,
                 batch_size=computed_batch,
-                ent_coef=0.01,
+                ent_coef=0.05,  # Increased from 0.01 to encourage exploration
+                learning_rate=3e-4,  # Explicit learning rate for better control
                 device=DEVICE  # Use CUDA if available
             )
             del self.env
@@ -512,7 +513,8 @@ class CustomAgent(Agent):
                 verbose=0,
                 n_steps=N_STEPS,
                 batch_size=computed_batch,
-                ent_coef=0.01,
+                ent_coef=0.05,  # Increased from 0.01 to encourage exploration
+                learning_rate=3e-4,  # Explicit learning rate for better control
                 device=DEVICE  # Use CUDA if available
             )
             del self.env
@@ -758,6 +760,19 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
     else:
         return 1.0
 
+def survival_reward(env: WarehouseBrawl) -> float:
+    """
+    Provides a small positive reward every frame to encourage the agent to stay alive.
+    This helps balance out the negative penalties and provides incremental learning signal.
+    """
+    player: Player = env.objects["player"]
+    # Only give reward if player is alive (not knocked out)
+    player_state = player.state
+    # Check if player is in a knocked out state (typically state 5 or 11)
+    is_alive = not (hasattr(player_state, '__class__') and 
+                    player_state.__class__.__name__ in ['KnockedOutState', 'FallenState'])
+    return 1.0 if is_alive else 0.0
+
 '''
 Add your dictionary of RewardFunctions here using RewTerms
 '''
@@ -771,22 +786,23 @@ def gen_reward_manager():
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
         'danger_zone_reward': RewTerm(
             func=danger_zone_reward,
-            weight=weights.get('danger_zone_reward', 0.5),
-            params={'zone_penalty': danger_cfg.get('zone_penalty', 1), 'zone_height': danger_cfg.get('zone_height', 4.2)}
+            weight=weights.get('danger_zone_reward', -20.0),
+            params={'zone_penalty': danger_cfg.get('zone_penalty', 1), 'zone_height': danger_cfg.get('zone_height', 3.5)}
         ),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=weights.get('damage_interaction_reward', 1.0)),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=weights.get('penalize_attack_reward', -0.04), params={'desired_state': AttackState}),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=weights.get('holding_more_than_3_keys', -0.01)),
+        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=weights.get('penalize_attack_reward', -0.02), params={'desired_state': AttackState}),
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=weights.get('holding_more_than_3_keys', 0.0)),
+        'survival_reward': RewTerm(func=survival_reward, weight=weights.get('survival_reward', 0.1)),
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=signals.get('on_win_reward', 50))),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=signals.get('on_knockout_reward', 8))),
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=signals.get('on_combo_reward', 5))),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=signals.get('on_equip_reward', 10))),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=signals.get('on_drop_reward', 15)))
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=signals.get('on_knockout_reward', 10))),
+        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=signals.get('on_combo_reward', 8))),
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=signals.get('on_equip_reward', 15))),
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=signals.get('on_drop_reward', -5)))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -883,7 +899,8 @@ if __name__ == '__main__':
 
     # Training configuration - CONTINUOUS LEARNING (not epochs!)
     # Set total timesteps for how long you want to train (no artificial epochs)
-    TRAIN_TIMESTEPS = 100_000  # 100k timesteps = continuous training, agent improves throughout
+    # Recommended: 500k-1M timesteps for good convergence with improved rewards
+    TRAIN_TIMESTEPS = 500_000  # Increased from 100k for better learning (was too short)
     FAST_MODE = False  # False = full 90-second matches for proper training
     VISUALIZATION_INTERVAL = 30  # Run visualization game every 30 seconds
     SKIP_INITIAL_VIZ = True  # Skip initial visualization to start training immediately

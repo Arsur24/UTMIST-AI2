@@ -13,21 +13,22 @@ CONFIG_PATH = Path(__file__).with_suffix('.json')
 
 DEFAULT_CFG: Dict[str, Any] = {
     "weights": {
-        "danger_zone_reward": 0.5,
+        "danger_zone_reward": -20.0,
         "damage_interaction_reward": 1.0,
-        "penalize_attack_reward": -0.04,
-        "holding_more_than_3_keys": -0.01
+        "penalize_attack_reward": -0.02,
+        "holding_more_than_3_keys": 0.0,
+        "survival_reward": 0.1
     },
     "danger_zone": {
         "zone_penalty": 1,
-        "zone_height": 4.2
+        "zone_height": 3.5
     },
     "signals": {
         "on_win_reward": 50,
-        "on_knockout_reward": 8,
-        "on_combo_reward": 5,
-        "on_equip_reward": 10,
-        "on_drop_reward": 15
+        "on_knockout_reward": 10,
+        "on_combo_reward": 8,
+        "on_equip_reward": 15,
+        "on_drop_reward": -5
     },
     # When True, importing the training module will attempt to open the Tkinter GUI automatically
     "auto_launch_gui": True,
