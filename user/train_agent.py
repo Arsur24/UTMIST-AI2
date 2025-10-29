@@ -642,6 +642,10 @@ def make_env(i: int,
     def _init():
         # silence audio for headless workers
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""   # workers see no gpu
+        torch.set_num_threads(1)
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("MKL_NUM_THREADS", "1")
 
         rm = gen_reward_manager()
 
@@ -758,7 +762,7 @@ if __name__ == "__main__":
         CustomAgent,
         sb3_class=PPO,
         extractor=MLPExtractor,
-        sb3_kwargs=sb3_kwargs,       # your CustomAgent can ignore these when loading from zip
+        sb3_kwargs=dict(device="cpu"),
         policy_kwargs=policy_kwargs
     )
 
