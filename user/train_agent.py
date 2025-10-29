@@ -648,8 +648,8 @@ if __name__ == "__main__":
     sb3_kwargs = dict(
         device="cuda",
         verbose=1,
-        n_steps=256,       # per-env rollout; 1024*8 = 8192 samples/update if n_envs=8
-        batch_size=2048,    # must divide n_steps * n_envs
+        n_steps=512,       # per-env rollout; 1024*8 = 8192 samples/update if n_envs=8
+        batch_size=4096,    # must divide n_steps * n_envs
         n_epochs=10,
         learning_rate=3e-4,
         gamma=0.999,
@@ -658,10 +658,10 @@ if __name__ == "__main__":
         clip_range=0.2,
         target_kl=0.02,
     )
-
+    
     policy_kwargs = dict(
         activation_fn=nn.SiLU,
-        net_arch=[dict(pi=[256, 256], vf=[256, 256])]
+        net_arch=[dict(pi=[256, 256], vf=[256, 256])] # model architecture
     )
 
     # what the opponent loads when env.reset() happens
