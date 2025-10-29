@@ -1,10 +1,3 @@
-# Change working directory to project root to fix asset paths
-import os
-import sys
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.chdir(project_root)
-print(f"Working directory: {os.getcwd()}")
-
 from environment.environment import RenderMode, CameraResolution
 from environment.agent import run_match
 from user.train_agent import UserInputAgent, BasedAgent, ConstantAgent, ClockworkAgent, SB3Agent, RecurrentPPOAgent #add anymore custom Agents (from train_agent.py) here as needed
@@ -14,7 +7,7 @@ pygame.init()
 
 my_agent = UserInputAgent()
 
-#Input your file path here in SubmittedAgent if you are loading a model:
+#NOTE: Input your file path here in SubmittedAgent if you are loading a model:
 opponent = SubmittedAgent()
 
 match_time = 99999
@@ -25,5 +18,5 @@ run_match(
     agent_2=opponent,
     max_timesteps=30 * match_time,  # Match time in frames (adjust as needed)
     resolution=CameraResolution.LOW,
-    video_path='tt_agent.mp4'
+    video_path='tt_agent.mp4' #NOTE: you can change the save path of the video here
 )
