@@ -225,8 +225,6 @@ class RewardManager():
     def process(self, env, dt) -> float:
         # reset computation
         reward_buffer = 0.0
-        reward_breakdown = {}  # Track individual reward contributions
-
         # iterate over all the reward terms
         if self.reward_functions is not None:
             for name, term_cfg in self.reward_functions.items():
@@ -238,20 +236,7 @@ class RewardManager():
                 # update total reward
                 reward_buffer += value
 
-                # Store breakdown for logging
-                if value != 0:
-                    reward_breakdown[name] = value
-                    # Print immediate feedback for non-zero rewards (only from env 0 to avoid 10x duplication)
-                    if hasattr(env, 'unwrapped') and hasattr(env.unwrapped, 'games_done') and env.unwrapped.games_done <= 1:
-                        print(f"  💰 {name}: {value:+.4f}")
-
         reward = reward_buffer + self.collected_signal_rewards
-
-        # Log signal rewards (only from env 0)
-        if self.collected_signal_rewards != 0:
-            if hasattr(env, 'unwrapped') and hasattr(env.unwrapped, 'games_done') and env.unwrapped.games_done <= 1:
-                print(f"  🎯 Signal rewards: {self.collected_signal_rewards:+.4f}")
-
         self.collected_signal_rewards = 0.0
 
         self.total_reward += reward
@@ -259,7 +244,6 @@ class RewardManager():
         log = env.logger[0]
         log['reward'] = f'{reward_buffer:.3f}'
         log['total_reward'] = f'{self.total_reward:.3f}'
-        log['reward_breakdown'] = reward_breakdown  # Store breakdown in logger
         env.logger[0] = log
         return reward
 
@@ -308,7 +292,6 @@ class SaveHandler():
         self.save_path = save_path
         self.name_prefix = name_prefix
         self.mode = mode
-        self.num_timesteps = 0  # Initialize num_timesteps
 
         self.steps_until_save = save_freq
         # Get model paths from exp_path, if it exists
@@ -569,6 +552,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         }
 
         observations, rewards, terminated, truncated, info = self.raw_env.step(full_action)
+        self.opponent_obs = observations[1]
 
         if self.save_handler is not None:
             self.save_handler.process()
@@ -787,13 +771,6 @@ class BasedAgent(Agent):
         # Attack if near
         if (pos[0] - opp_pos[0]) ** 2 + (pos[1] - opp_pos[1]) ** 2 < 4.0:
             action = self.act_helper.press_keys(['j'], action)
-
-        # Pick up weapons - press 'g' to pick up nearby weapons
-        # This triggers on_equip_reward (+10) when successful
-        # Try to pick up every 15 frames to keep trying for weapons
-        if self.time % 15 == 0:
-            action = self.act_helper.press_keys(['g'], action)
-
         return action
 
 
@@ -1072,7 +1049,9 @@ def train(agent: Agent,
         agent.learn(env, total_timesteps=train_timesteps, verbose=1)
         base_env.on_training_end()
     except KeyboardInterrupt:
-        pass
+        if save_handler is not None:
+            save_handler.agent.update_num_timesteps(save_handler.num_timesteps)
+            save_handler.save_agent()
 
     env.close()
 
