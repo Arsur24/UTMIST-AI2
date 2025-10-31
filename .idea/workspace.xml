@@ -4,15 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="3aa24987-2ad7-446a-9819-a3a3e8ca488e" name="Changes" comment="added config file">
-      <change afterPath="$PROJECT_DIR$/test_import.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/user/parallel_training.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/user/ttnn_integration.py" afterDir="false" />
+    <list default="true" id="3aa24987-2ad7-446a-9819-a3a3e8ca488e" name="Changes" comment="added .idea in gitignore">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/UTMIST-AI2-2025.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/UTMIST-AI2-2025.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/csv-editor.xml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/TheoriesAndIdeas/general.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/TheoriesAndIdeas/general.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/environment/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/environment/agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user/train_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/user/train_agent.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -27,6 +23,11 @@
     </option>
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
@@ -38,9 +39,12 @@
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/Arsur24/UTMIST-AI2.git&quot;,
-    &quot;accountId&quot;: &quot;490415aa-fe34-4aa0-b6ac-b446e9e3ee35&quot;
+    &quot;accountId&quot;: &quot;f6dea654-d43e-4bd9-a9bb-20d39388fb58&quot;
   }
 }</component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$PROJECT_DIR$/environment/environment.py" root0="FORCE_HIGHLIGHTING" />
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 0
 }</component>
@@ -54,9 +58,11 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "ASKED_MARK_IGNORED_FILES_AS_EXCLUDED": "true",
     "Batch.env.executor": "Run",
     "Python 测试.Python 测试 (test_import.py 内).executor": "Run",
     "Python.demo_match.executor": "Run",
+    "Python.my_agent.executor": "Run",
     "Python.parallel_training.executor": "Run",
     "Python.pickle_test.executor": "Run",
     "Python.pvp_match.executor": "Run",
@@ -67,7 +73,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "SHELLCHECK.PATH": "C:\\Users\\orang\\AppData\\Roaming\\JetBrains\\PyCharm2025.2\\plugins\\Shell Script\\shellcheck.exe",
-    "git-widget-placeholder": "main",
+    "git-widget-placeholder": "or4ngy",
     "ignore.virus.scanning.warn.message": "true",
     "last_opened_file_path": "C:/Users/orang/PycharmProjects/UTMIST-AI2/user",
     "node.js.detected.package.eslint": "true",
@@ -116,6 +122,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
+        <option value="bundled-js-predefined-d6986cc7102b-3aa1da707db6-JavaScript-PY-252.27397.106" />
         <option value="bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106" />
       </set>
     </attachedChunks>
@@ -137,6 +144,14 @@
       <workItem from="1761490597727" duration="99000" />
       <workItem from="1761490786532" duration="8565000" />
       <workItem from="1761504639325" duration="1414000" />
+      <workItem from="1761594914783" duration="1396000" />
+      <workItem from="1761603031168" duration="9439000" />
+      <workItem from="1761697895186" duration="991000" />
+      <workItem from="1761700236263" duration="1300000" />
+      <workItem from="1761786361446" duration="1131000" />
+      <workItem from="1761789948889" duration="2078000" />
+      <workItem from="1761868621476" duration="1369000" />
+      <workItem from="1761870011772" duration="2678000" />
     </task>
     <task id="LOCAL-00001" summary="Updated VENV">
       <option name="closed" value="true" />
@@ -170,7 +185,71 @@
       <option name="project" value="LOCAL" />
       <updated>1761492176316</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="Fixed multiple bugs and added realtime visualization and reward">
+      <option name="closed" value="true" />
+      <created>1761542855155</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1761542855155</updated>
+    </task>
+    <task id="LOCAL-00006" summary="updated task list">
+      <option name="closed" value="true" />
+      <created>1761595413554</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1761595413554</updated>
+    </task>
+    <task id="LOCAL-00007" summary="One bug left -&gt; saving problem">
+      <option name="closed" value="true" />
+      <created>1761611475798</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1761611475798</updated>
+    </task>
+    <task id="LOCAL-00008" summary="tried fixing bug, not tested yet">
+      <option name="closed" value="true" />
+      <created>1761612921797</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1761612921797</updated>
+    </task>
+    <task id="LOCAL-00009" summary="tried fixing bug, not tested yet">
+      <option name="closed" value="true" />
+      <created>1761704438340</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1761704438340</updated>
+    </task>
+    <task id="LOCAL-00010" summary="tried fixing bug, not tested yet">
+      <option name="closed" value="true" />
+      <created>1761787193250</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1761787193250</updated>
+    </task>
+    <task id="LOCAL-00011" summary="added .idea in gitignore">
+      <option name="closed" value="true" />
+      <created>1761869623384</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1761869623384</updated>
+    </task>
+    <task id="LOCAL-00012" summary="added .idea in gitignore">
+      <option name="closed" value="true" />
+      <created>1761872694295</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1761872694295</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -181,13 +260,19 @@
     <MESSAGE value="updated folder for ideas and project initiating" />
     <MESSAGE value="updated configs" />
     <MESSAGE value="added config file" />
-    <option name="LAST_COMMIT_MESSAGE" value="added config file" />
+    <MESSAGE value="Fixed multiple bugs and added realtime visualization and reward" />
+    <MESSAGE value="updated task list" />
+    <MESSAGE value="One bug left -&gt; saving problem" />
+    <MESSAGE value="tried fixing bug, not tested yet" />
+    <MESSAGE value="added .idea in gitignore" />
+    <option name="LAST_COMMIT_MESSAGE" value="added .idea in gitignore" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/UTMIST_AI2$train_agent.coverage" NAME="train_agent 覆盖结果" MODIFIED="1761542797446" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/" />
-    <SUITE FILE_PATH="coverage/UTMIST_AI2$rewards_config.coverage" NAME="rewards_config 覆盖结果" MODIFIED="1761526232253" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
+    <SUITE FILE_PATH="coverage/UTMIST_AI2$my_agent.coverage" NAME="my_agent 覆盖结果" MODIFIED="1761607330254" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
+    <SUITE FILE_PATH="coverage/UTMIST_AI2$train_agent.coverage" NAME="train_agent 覆盖结果" MODIFIED="1761869710498" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/" />
     <SUITE FILE_PATH="coverage/UTMIST_AI2$demo_match.coverage" NAME="demo_match 覆盖结果" MODIFIED="1761528575398" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
-    <SUITE FILE_PATH="coverage/UTMIST_AI2$pvp_match.coverage" NAME="pvp_match 覆盖结果" MODIFIED="1761496340649" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
+    <SUITE FILE_PATH="coverage/UTMIST_AI2$rewards_config.coverage" NAME="rewards_config 覆盖结果" MODIFIED="1761610651441" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
+    <SUITE FILE_PATH="coverage/UTMIST_AI2$pvp_match.coverage" NAME="pvp_match 覆盖结果" MODIFIED="1761698391915" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
     <SUITE FILE_PATH="coverage/UTMIST_AI2$.coverage" NAME=" 覆盖结果" MODIFIED="1761529127439" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/UTMIST_AI2$pickle_test.coverage" NAME="pickle_test 覆盖结果" MODIFIED="1761498280102" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
     <SUITE FILE_PATH="coverage/UTMIST_AI2$parallel_training.coverage" NAME="parallel_training 覆盖结果" MODIFIED="1761530774965" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/user" />
