@@ -106,26 +106,39 @@ class SubmittedAgent(Agent):
     # anchor: submitted_agent_predict
     def predict(self, obs):
         """
-        inference-time mirroring: if facing_left, swap left/right buttons so the
-        policy's ego-right action matches world coordinates.
-        handles (64,) or (B,64) obs.
+        mirror to match training wrapper: swap indices (1,3) when facing left.
+        assumes Box[0,1] actions with button gates around 0.5.
+        handles (64,) or (B,64).
         """
         import numpy as np
 
-        # compute sign from facing bit (idx=4): >0.5 => right(+1), else left(-1)
+        def _swap_A_D(a: np.ndarray, facing_right_bit: float) -> np.ndarray:
+            if facing_right_bit <= 0.5:
+                a = a.copy()
+                a[1], a[3] = a[3], a[1]   # A <-> D
+            return a
+
         arr = np.asarray(obs, dtype=np.float32)
+
         if arr.ndim == 1:
-            sign = 1.0 if (arr.shape[0] > 4 and float(arr[4]) > 0.5) else -1.0
-            action, _ = self.model.predict(arr, deterministic=True)
-            return _mirror_action(action, sign)
-        else:
-            # batched
-            B = arr.shape[0]
-            actions, _ = self.model.predict(arr, deterministic=True)
-            for i in range(B):
-                s = 1.0 if (arr[i].shape[0] > 4 and float(arr[i, 4]) > 0.5) else -1.0
-                actions[i] = _mirror_action(actions[i], s)
-            return actions
+            facing_right = float(arr[4]) if arr.shape[0] > 4 else 1.0
+            # sample like training; switch to deterministic=True later if you prefer
+            action, _ = self.model.predict(arr, deterministic=False)
+            # safety clamp to [0,1] in case action_space low/high differs
+            action = np.clip(action, 0.0, 1.0)
+            action = _swap_A_D(action, facing_right)
+            # small bias to cross 0.5 gates; remove if not needed
+            action = np.clip(action + 0.02, 0.0, 1.0)
+            return action
+
+        # batched
+        actions, _ = self.model.predict(arr, deterministic=False)
+        actions = np.clip(actions, 0.0, 1.0)
+        for i in range(arr.shape[0]):
+            facing_right = float(arr[i, 4]) if arr.shape[1] > 4 else 1.0
+            actions[i] = _swap_A_D(actions[i], facing_right)
+            actions[i] = np.clip(actions[i] + 0.02, 0.0, 1.0)
+        return actions
 
 
     def save(self, file_path: str) -> None:
