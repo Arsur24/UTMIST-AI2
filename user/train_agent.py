@@ -1067,14 +1067,14 @@ if __name__ == "__main__":
     policy_kwargs = dict(
         activation_fn=nn.SiLU,
         net_arch=[dict(pi=[256, 256, 128], vf=[256, 256, 128])],
-        features_extractor_class=ResMLPExtractor,
+        features_extractor_class=MLPExtractor,
         features_extractor_kwargs=dict(features_dim=256, hidden_dim=512)
         )
 
     policy_partial_cpu = partial(
         CustomAgent,
         sb3_class=PPO,
-        extractor=ResMLPExtractor,
+        extractor=MLPExtractor,
         sb3_kwargs=dict(device="cpu"),
         policy_kwargs=policy_kwargs
     )
