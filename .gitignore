@@ -12,6 +12,7 @@ attacks.zip
 assets.zip
 .venv
 .env
+.idea
 
 /checkpoints/*
 
