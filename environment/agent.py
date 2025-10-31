@@ -33,6 +33,9 @@ from torch import nn
 import gymnasium
 from gymnasium import spaces
 import pymunk
+from typing import Dict, Optional
+
+from user.reward_fastpath import get_ctx
 
 # heavy viz/io — only import when not headless; else define names as None to keep references valid
 try:
@@ -227,57 +230,141 @@ class RewTerm():
 # In[ ]:
 
 
-class RewardManager():
-    def __init__(self, reward_functions=None, signal_subscriptions=None, log_terms: bool = True) -> None:
-        self.reward_functions = reward_functions
-        self.signal_subscriptions = signal_subscriptions
+class RewardManager:
+    __slots__ = (
+        "reward_functions",
+        "signal_subscriptions",
+        "total_reward",
+        "collected_signal_rewards",
+        "log_terms",
+        "last_terms",
+        "last_signals",
+        "_active_terms",
+        "_cfg_epoch",
+        "_last_epoch",
+    )
+
+    def __init__(self, reward_functions: Optional[Dict[str, Any]] = None,
+                 signal_subscriptions: Optional[Dict[Any, Tuple[str, Any]]] = None,
+                 log_terms: bool = True) -> None:
+        self.reward_functions = reward_functions or {}
+        self.signal_subscriptions = signal_subscriptions or {}
         self.total_reward = 0.0
         self.collected_signal_rewards = 0.0
-        self.log_terms = log_terms
-        if self.log_terms:
-            self.last_terms: dict[str, float] = {}
-            self.last_signals: float = 0.0
+        self.log_terms = bool(log_terms)
+        self.last_terms: Dict[str, float] = {} if self.log_terms else {}
+        self.last_signals: float = 0.0
+        self._active_terms: List[Tuple[str, Callable[[Any], float], float]] = []
+        self._rebuild_active_terms()
 
+    def __setattr__(self, name, value):
+        # auto-rebuild if the whole reward_functions dict is replaced
+        object.__setattr__(self, name, value)
+        if name == "reward_functions":
+            # tolerate first-time __init__ population
+            if hasattr(self, "_active_terms"):
+                self._rebuild_active_terms()
+
+    # anchor: set_reward_functions
+    def set_reward_functions(self, reward_functions: dict) -> None:
+        # replace table and bump epoch
+        self.reward_functions = reward_functions or {}
+        self._cfg_epoch = getattr(self, "_cfg_epoch", 0) + 1
+        self._rebuild_active_terms()
+
+    # anchor: rebuild_active_terms
+    def _rebuild_active_terms(self) -> None:
+        # cache (name, fn(env)->float, weight_float). params are bound; weight is frozen
+        active = []
+        for name, cfg in (self.reward_functions or {}).items():
+            w = float(getattr(cfg, "weight", 0.0))
+            if not w:
+                continue
+            f = getattr(cfg, "func")
+            p = getattr(cfg, "params", None)
+            fn = partial(f, **p) if p else f
+            active.append((name, fn, w))
+        self._active_terms = tuple(active)
+        # init epoch counters if missing
+        self._cfg_epoch = getattr(self, "_cfg_epoch", 0)
+        self._last_epoch = getattr(self, "_last_epoch", -1)
+
+    # anchor: subscribe_signals_fast
     def subscribe_signals(self, env) -> None:
-        if not self.signal_subscriptions:
+        subs = self.signal_subscriptions
+        if not subs:
             return
-        for _, (name, term_cfg) in self.signal_subscriptions.items():
-            # bind once; no partial allocation inside the hot path
-            def _cb(*args, _tc=term_cfg, **kwargs):
-                v = _tc.func(*args, **_tc.params, **kwargs)
-                self.collected_signal_rewards += v * _tc.weight
+        for _, (name, cfg) in subs.items():
+            # keep params/weight live; do not snapshot weight; connect even if weight==0
+            fn = getattr(cfg, "func")
+            def _cb(*args, __fn=fn, __cfg=cfg, __self=self, **kwargs):
+                params = getattr(__cfg, "params", None)
+                w = float(getattr(__cfg, "weight", 0.0))
+                if not w:
+                    return
+                val = __fn(*args, **(params or {}), **kwargs)
+                __self.collected_signal_rewards += val * w
             getattr(env, name).connect(_cb)
 
+    def update_weights(self, updates: dict[str, float], *, zero_missing: bool = False) -> None:
+        # live weight edits + epoch bump
+        rf = self.reward_functions or {}
+        for k, w in updates.items():
+            if k in rf:
+                rf[k].weight = float(w)
+        if zero_missing:
+            for k, cfg in rf.items():
+                if k not in updates:
+                    cfg.weight = 0.0
+        self._cfg_epoch = getattr(self, "_cfg_epoch", 0) + 1
+        self._rebuild_active_terms()
+
+    # anchor: process_fast
     def process(self, env, dt) -> float:
-        reward_buffer = 0.0
-        terms_log = {} if self.log_terms else None
-        if self.reward_functions:
-            for name, term_cfg in self.reward_functions.items():
-                if term_cfg.weight == 0.0:
-                    continue
-                value = term_cfg.func(env, **term_cfg.params) * term_cfg.weight
-                reward_buffer += value
-                if terms_log is not None:
-                    terms_log[name] = value
+        # prime the per-step fast context exactly once
+        _ = get_ctx(env, dt)
 
-        reward = reward_buffer + self.collected_signal_rewards
-        if self.log_terms:
-            self.last_terms = terms_log
-            self.last_signals = float(self.collected_signal_rewards)
+        # ensure active terms reflect latest config
+        if getattr(self, "_cfg_epoch", 0) != getattr(self, "_last_epoch", -1):
+            self._rebuild_active_terms()
+            self._last_epoch = self._cfg_epoch
 
+        signals = self.collected_signal_rewards
+        reward = signals
+        log_terms = self.log_terms
+        active = getattr(self, "_active_terms", ())
+        terms_log: Optional[Dict[str, float]] = {} if (log_terms and active) else None
+
+        def _run(active_list):
+            r = signals
+            tlog = {} if (log_terms and active_list) else None
+            for name, fn, w in active_list:
+                v = fn(env) * w
+                r += v
+                if tlog is not None:
+                    tlog[name] = v
+            return r, tlog
+
+        try:
+            reward, terms_log = _run(active)
+        except TypeError:
+            # rare: signature changed; rebuild once and retry
+            self._rebuild_active_terms()
+            self._last_epoch = self._cfg_epoch
+            reward, terms_log = _run(self._active_terms)
+
+        if log_terms:
+            # keep pure numerics; callback will call logger.record(...)
+            self.last_terms = terms_log or {}
+            self.last_signals = float(signals)
+
+        # reset signals and accumulate total
         self.collected_signal_rewards = 0.0
         self.total_reward += reward
-
-        if self.log_terms:
-            # avoid string formatting if no logger
-            if hasattr(env, "logger"):
-                log = env.logger[0]
-                log["reward"] = f"{float(reward_buffer):.3f}"
-                log["total_reward"] = f"{float(self.total_reward):.3f}"
-                env.logger[0] = log
         return reward
 
-    def reset(self):
+    # anchor: reset
+    def reset(self) -> None:
         self.total_reward = 0.0
         self.collected_signal_rewards = 0.0
         if self.log_terms:
@@ -461,38 +548,85 @@ class SelfPlayRandom(SelfPlayHandler):
 
 # simple directory-backed self-play handlers (avoid passing SaveHandler into subprocesses)
 class DirSelfPlayLatest(SelfPlayHandler):
-    def __init__(self, agent_partial: partial, ckpt_dir: str):
+    def __init__(self, agent_partial: partial, ckpt_dir: str, max_cache: int=4):
         super().__init__(agent_partial)
         self.ckpt_dir = ckpt_dir
-        self._cache = []
+        self._cache: dict[str, Agent] = {}
+        self._order: list[str] = []
+        self._files: list[str] = []
         self._last_count = -1
+        self._max_cache = int(max_cache)
+
     def _refresh(self):
         files = [f for f in os.listdir(self.ckpt_dir) if f.endswith(".zip")]
         if len(files) != self._last_count:
-            self._cache = sorted(files, key=lambda f: int(f.split("_")[-2]))
+            files.sort(key=lambda f: int(f.split("_")[-2]))
+            self._files = files
             self._last_count = len(files)
+
+    def _get_or_load(self, path: Optional[str]) -> Agent:
+        if path is None:
+            ag = ConstantAgent()
+            ag.get_env_info(self.env)
+            return ag
+        if path in self._cache:
+            ag = self._cache[path]
+            ag.reset()
+            return ag
+        opponent = self.agent_partial(file_path=path)
+        opponent.get_env_info(self.env)
+        self._cache[path] = opponent
+        self._order.append(path)
+        if len(self._order) > self._max_cache:
+            evict = self._order.pop(0)
+            self._cache.pop(evict, None)
+        return opponent
+
     def get_opponent(self) -> Agent:
         self._refresh()
-        chosen = self._cache[-1] if self._cache else None
+        chosen = self._files[-1] if self._files else None
         path = os.path.join(self.ckpt_dir, chosen) if chosen else None
-        return self.get_model_from_path(path)
+        return self._get_or_load(path)
 
 class DirSelfPlayRandom(SelfPlayHandler):
-    def __init__(self, agent_partial: partial, ckpt_dir: str):
+    def __init__(self, agent_partial: partial, ckpt_dir: str, max_cache: int=4):
         super().__init__(agent_partial)
         self.ckpt_dir = ckpt_dir
-        self._cache = []
+        self._cache: dict[str, Agent] = {}
+        self._order: list[str] = []
+        self._files: list[str] = []
         self._last_count = -1
+        self._max_cache = int(max_cache)
+
     def _refresh(self):
         files = [f for f in os.listdir(self.ckpt_dir) if f.endswith(".zip")]
         if len(files) != self._last_count:
-            self._cache = files
+            self._files = files
             self._last_count = len(files)
+
+    def _get_or_load(self, path: Optional[str]) -> Agent:
+        if path is None:
+            ag = ConstantAgent()
+            ag.get_env_info(self.env)
+            return ag
+        if path in self._cache:
+            ag = self._cache[path]
+            ag.reset()
+            return ag
+        opponent = self.agent_partial(file_path=path)
+        opponent.get_env_info(self.env)
+        self._cache[path] = opponent
+        self._order.append(path)
+        if len(self._order) > self._max_cache:
+            evict = self._order.pop(0)
+            self._cache.pop(evict, None)
+        return opponent
+
     def get_opponent(self) -> Agent:
         self._refresh()
-        chosen = random.choice(self._cache) if self._cache else None
+        chosen = random.choice(self._files) if self._files else None
         path = os.path.join(self.ckpt_dir, chosen) if chosen else None
-        return self.get_model_from_path(path)
+        return self._get_or_load(path)
 
 @dataclass
 class OpponentsCfg():
@@ -549,56 +683,52 @@ class OpponentsCfg():
 
 class SelfPlayWarehouseBrawl(gymnasium.Env):
     """Custom Environment that follows gym interface."""
-
     metadata = {"render_modes": ["human"], "render_fps": 30}
 
     def __init__(self,
-                 reward_manager: Optional[RewardManager]=None,
-                 opponent_cfg: OpponentsCfg=OpponentsCfg(),
-                 save_handler: Optional[SaveHandler]=None,
-                 render_every: int | None = None,
-                 resolution: CameraResolution=CameraResolution.LOW, 
-                 train_mode=True, mode: RenderMode=RenderMode.RGB_ARRAY):
-        """
-        Initializes the environment.
-
-        Args:
-            reward_manager (Optional[RewardManager]): Reward manager.
-            opponent_cfg (OpponentCfg): Configuration for opponents.
-            save_handler (SaveHandler | None): set only when training from a single process that writes checkpoints.
-            render_every (int | None): Number of steps between a demo render (None if no rendering).
-        """
+                 reward_manager: Optional["RewardManager"]=None,
+                opponent_cfg: "OpponentsCfg"=None,
+                save_handler: Optional["SaveHandler"]=None,
+                render_every: int | None = None,
+                resolution: CameraResolution = CameraResolution.LOW,
+                train_mode: bool = True,
+                mode: RenderMode = RenderMode.RGB_ARRAY,
+                debug_log_terms: bool = False):
+        # anchor: sp_env_init
         super().__init__()
-
         self.train_mode = train_mode
         self.reward_manager = reward_manager
         self.save_handler = save_handler
-        self.opponent_cfg = opponent_cfg
+        self.opponent_cfg = opponent_cfg or OpponentsCfg()
         self.render_every = render_every
         self.resolution = resolution
         self.mode = mode
+        self.debug_log_terms = bool(debug_log_terms)
 
         self.games_done = 0
 
-        # give OpponentCfg references, and normalize probabilities
+        # setup opponents
         self.opponent_cfg.env = self
         self.opponent_cfg.validate_probabilities()
-
-        # wire up self-play handlers without forcing a save_handler
         for _, (prob, handler) in self.opponent_cfg.opponents.items():
             if isinstance(handler, SelfPlayHandler):
                 handler.env = self
                 if self.save_handler is not None:
                     handler.save_handler = self.save_handler
 
-        self.raw_env = WarehouseBrawl(resolution=resolution, train_mode=True, mode=mode)
+        # construct raw env and mirror spaces/helpers
+        self.raw_env = WarehouseBrawl(resolution=resolution, train_mode=train_mode, mode=mode)
         self.action_space = self.raw_env.action_space
         self.act_helper = self.raw_env.act_helper
         self.observation_space = self.raw_env.observation_space
         self.obs_helper = self.raw_env.obs_helper
 
+    def set_reward_weights(self, updates: Dict[str, float], zero_missing: bool=False) -> None:
+        # anchor: sp_env_set_weights
+        if self.reward_manager is not None:
+            self.reward_manager.update_weights(updates, zero_missing=zero_missing)
+
     def on_training_start(self):
-        # update SaveHandler if present
         if self.save_handler is not None:
             self.save_handler.update_info()
 
@@ -607,13 +737,13 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             self.save_handler.agent.update_num_timesteps(self.save_handler.num_timesteps)
             self.save_handler.save_agent()
 
+    # anchor: sp_env_step_trim_info
     def step(self, action):
-        full_action = {
-            0: action,
-            1: self.opponent_agent.predict(self.opponent_obs),
-        }
-
+        full_action = {0: action, 1: self.opponent_agent.predict(self.opponent_obs)}
         observations, rewards, terminated, truncated, info = self.raw_env.step(full_action)
+
+        # fix: refresh cached opponent observation
+        self.opponent_obs = observations[1]
 
         if self.save_handler is not None:
             self.save_handler.process()
@@ -621,41 +751,40 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         if self.reward_manager is None:
             reward = rewards[0]
         else:
-            # use the env fps if available
             dt = 1.0 / getattr(self.raw_env, "fps", 30.0)
             reward = self.reward_manager.process(self.raw_env, dt)
 
-         # ensure we return a dict for player 0 and attach breakdown
-        info0 = info[0] if isinstance(info, (list, tuple)) else info
-        if hasattr(self.reward_manager, "last_terms"):
-            info0 = dict(info0)  # copy if needed
+        info0: Dict[str, Any] = info[0] if isinstance(info, (list, tuple)) else info
+        if self.debug_log_terms and hasattr(self.reward_manager, "last_terms"):
+            info0 = dict(info0)
             info0["rew_terms"] = dict(self.reward_manager.last_terms)
             info0["rew_signals"] = float(self.reward_manager.last_signals)
-
 
         return observations[0], reward, terminated, truncated, info0
 
     def reset(self, seed=None, options=None):
         observations, info = self.raw_env.reset()
 
+        # clear cached reward ctx on fresh episode
+        try:
+            from user.reward_fastpath import clear_cached_ctx
+            clear_cached_ctx(self.raw_env)
+        except Exception:
+            pass
+
         if self.reward_manager is not None:
             self.reward_manager.reset()
 
-        # select agent
         new_agent: Agent = self.opponent_cfg.on_env_reset()
         if new_agent is not None:
-            self.opponent_agent: Agent = new_agent
+            self.opponent_agent = new_agent
         self.opponent_obs = observations[1]
 
         self.games_done += 1
-        # if self.render_every is not None and self.games_done % self.render_every == 0:
-        #     self.render_out_video()
-
         return observations[0], info
 
     def render(self):
-        img = self.raw_env.render()
-        return img
+        return self.raw_env.render()
 
     def close(self):
         pass
@@ -666,6 +795,35 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
 # In[ ]:
 
+# anchor: prevpos_wrapper
+class PrevPosWrapper:
+    """injects prev_x/prev_y onto env.objects['player'|'opponent'] before each step."""
+    def __init__(self, env, names=("player", "opponent")):
+        self._env = env
+        self._names = names
+
+    def _stamp_prev(self):
+        objs = getattr(self._env, "objects", {})
+        for n in self._names:
+            obj = objs.get(n)
+            if obj is None:
+                continue
+            # record last positions
+            setattr(obj, "prev_x", float(obj.body.position.x))
+            setattr(obj, "prev_y", float(obj.body.position.y))
+
+    def reset(self, *args, **kwargs):
+        obs, info = self._env.reset(*args, **kwargs)
+        self._stamp_prev()
+        return obs, info
+
+    def step(self, action):
+        self._stamp_prev()
+        return self._env.step(action)
+
+    def __getattr__(self, name):
+        # forward everything else transparently (fps, objects, etc.)
+        return getattr(self._env, name)
 
 from stable_baselines3.common.vec_env import DummyVecEnv
 from tqdm import tqdm
@@ -681,8 +839,8 @@ def run_match(agent_1: Agent | partial,
               train_mode=False
               ) -> MatchStats:
     # Initialize env
-
     env = WarehouseBrawl(resolution=resolution, train_mode=train_mode)
+    env = PrevPosWrapper(env)
     observations, infos = env.reset()
     obs_1 = observations[0]
     obs_2 = observations[1]
@@ -701,17 +859,16 @@ def run_match(agent_1: Agent | partial,
 
 
     writer = None
-    if video_path is None:
-        print("video_path=None -> Not rendering")
+    if video_path is None or skvideo is None:
+        print("video_path=None or skvideo unavailable -> not rendering")
     else:
-        print(f"video_path={video_path} -> Rendering")
-        # Initialize video writer
+        print(f"video_path={video_path} -> rendering")
         writer = skvideo.io.FFmpegWriter(video_path, outputdict={
-            '-vcodec': 'libx264',  # Use H.264 for Windows Media Player
-            '-pix_fmt': 'yuv420p',  # Compatible with both WMP & Colab
-            '-preset': 'fast',  # Faster encoding
-            '-crf': '20',  # Quality-based encoding (lower = better quality)
-            '-r': '30'  # Frame rate
+            '-vcodec': 'libx264',
+            '-pix_fmt': 'yuv420p',
+            '-preset': 'fast',
+            '-crf': '20',
+            '-r': '30'
         })
 
     # If partial
@@ -740,12 +897,12 @@ def run_match(agent_1: Agent | partial,
       if reward_manager is not None:
           reward_manager.process(env, 1 / env.fps)
 
-      if video_path is not None:
-            img = env.render()
-            img = np.rot90(img, k=-1)  #video output rotate fix
-            img = np.fliplr(img)  # Mirror/flip the image horizontally
-            writer.writeFrame(img) 
-            del img
+      if writer is not None:
+        img = env.render()
+        img = np.rot90(img, k=-1)
+        img = np.fliplr(img)
+        writer.writeFrame(img)
+        del img
 
       if terminated or truncated:
           break
@@ -773,7 +930,9 @@ def run_match(agent_1: Agent | partial,
         player2=player_2_stats,
         player1_result=result
     )
-
+    
+    if writer is not None:
+        writer.close()
     del env
 
     return match_stats
@@ -1028,7 +1187,8 @@ class RecurrentPPOAgent(Agent):
             self.model = RecurrentPPO.load(self.file_path)
 
     def reset(self) -> None:
-        self.episode_starts = True
+        self.lstm_states = None
+        self.episode_starts = np.ones((1,), dtype=bool)
 
     def predict(self, obs):
         action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
