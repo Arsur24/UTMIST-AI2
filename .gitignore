@@ -34,3 +34,4 @@ env/
 ai2/
 # Local scratch
 path/
+/.idea/
