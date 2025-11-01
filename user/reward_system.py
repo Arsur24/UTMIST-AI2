@@ -363,15 +363,42 @@ def spam_penalty(env: WarehouseBrawl, attack_thresh: int = 3) -> float:
 
 def weapon_distance_reward(env: WarehouseBrawl) -> float:
     ctx = ctx_or_compute(env)
+
+    # Player position
+    px, py = ctx.px, ctx.py
+
+    nearest_dist2 = None
+
+    # Iterate over all environment objects
     for obj in getattr(env, "objects", {}).values():
-        if obj.shape.filter == ShapeFilter(categories=WEAPON_CAT, mask=ALL_CATS):
-            weapon = obj
-            x, y = ctx.px, ctx.py
-            wx, wy = weapon.body.position.x, weapon.body.position.y
-            dist = abs(wx - x) ** 2 + abs(wy - y) ** 2
-            # Return negative distance to encourage moving closer to weapons
-            return -dist * ctx.dt
-    # If no weapon found, return 0
+        shape = getattr(obj, "shape", None)
+        if shape is None:
+            continue
+
+        filt = getattr(shape, "filter", None)
+        # Skip objects without proper filter
+        if not isinstance(filt, ShapeFilter):
+            continue
+
+        # Check if object belongs to weapon category
+        if (filt.categories & WEAPON_CAT) == 0:
+            continue
+
+        # Get weapon position (body position is a pymunk.Vec2d)
+        wx, wy = float(obj.body.position.x), float(obj.body.position.y)
+
+        # Compute squared Euclidean distance
+        dist2 = (wx - px) ** 2 + (wy - py) ** 2
+
+        # Track nearest weapon distance
+        if nearest_dist2 is None or dist2 < nearest_dist2:
+            nearest_dist2 = dist2
+
+    # If a weapon is found, return negative distance (closer = higher reward)
+    if nearest_dist2 is not None:
+        return -nearest_dist2 * ctx.dt
+
+    # No weapon objects found
     return 0.0
 
 def throw_quality_reward(env: WarehouseBrawl) -> float:
@@ -506,6 +533,7 @@ def gen_reward_manager(log_terms: bool=True):
         'fell_off_map': RewTerm(func=fell_off_map_event, weight=-50.0, params={'pad': 1.0, 'only_bottom': False}),
         'spam_penalty': RewTerm(func=spam_penalty, weight=1.5, params={'attack_thresh': 3}),
         'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
+        'weapon_distance': RewTerm(func=weapon_distance_reward, weight=0.5),
 
     }
     signal_subscriptions = {

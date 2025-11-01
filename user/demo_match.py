@@ -1,14 +1,18 @@
+import os
+
 from environment.environment import RenderMode, CameraResolution
 from environment.agent import run_match
+from test_import import project_root
 from user.train_agent import UserInputAgent, BasedAgent, ConstantAgent, ClockworkAgent, SB3Agent, RecurrentPPOAgent #add anymore custom Agents (from train_agent.py) here as needed
 from user.my_agent import SubmittedAgent
 import pygame
 pygame.init()
+os.chdir(project_root)
 
-my_agent = SubmittedAgent(file_path="checkpoints/experiment_nonrecurrent3/final_model.zip")
+my_agent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_1000000_steps.zip")
 
 #NOTE: Input your file path here in SubmittedAgent if you are loading a model:
-opponent = SubmittedAgent(file_path="checkpoints/experiment_nonrecurrent3/final_model.zip")
+opponent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_1000000_steps.zip")
 
 match_time = 99999
 
