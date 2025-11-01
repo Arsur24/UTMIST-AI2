@@ -1,4 +1,5 @@
 # anchors: config, helpers, build_agents, run
+from openai import project
 
 # --- imports ---
 from environment.environment import RenderMode, CameraResolution
@@ -8,11 +9,15 @@ from user.my_agent import SubmittedAgent
 from typing import Optional, Dict, Any, List
 import pygame
 pygame.init()
+import os
+
+from test_import import project_root
+os.chdir(project_root)
 
 # anchor: config
 # primary checkpoint + optional alternate
-path: str = "checkpoints/FusedFeatureExtractor6N(DeeperStill)_27999552_steps.zip"
-pathAlt: Optional[str] = "checkpoints/FusedFeatureExtractor6N_DeeperValueNet_27999552_steps.zip"
+path: str = "checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2000000_steps.zip"
+pathAlt: Optional[str] = "checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2000000_steps.zip"
 
 # primary architecture; set any to None to use defaults baked into SubmittedAgent
 arch: Dict[str, Optional[Any]] = {

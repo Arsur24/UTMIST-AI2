@@ -401,6 +401,38 @@ def weapon_distance_reward(env: WarehouseBrawl) -> float:
     # No weapon objects found
     return 0.0
 
+def jump_interval_reward(env: WarehouseBrawl, min_interval: float = 1.0, scale: float = 1.0) -> float:
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+
+    # detect jump start: was on floor and now not, and upward velocity (y+ is down => vy < 0 is upward)
+    on_floor = bool(p.is_on_floor()) if hasattr(p, "is_on_floor") else False
+    was_on_floor = bool(getattr(p, "_rw_was_on_floor", on_floor))
+    vy = float(getattr(p.body, "velocity", (0.0, 0.0))[1])
+    jump_started = was_on_floor and (not on_floor) and (vy < -0.1)
+
+    # maintain time-since-last-jump timer on the player
+    prev_timer = float(getattr(p, "_rw_time_since_last_jump", 1e9))
+    if jump_started:
+        interval = prev_timer
+        # reset timer
+        p._rw_time_since_last_jump = 0.0
+        # penalize if interval shorter than ideal `min_interval`
+        if interval < min_interval:
+            frac = max(0.0, 1.0 - (interval / max(1e-6, min_interval)))
+            penalty = - (frac * frac) * scale
+            out = penalty
+        else:
+            out = 0.0
+    else:
+        # accumulate time
+        p._rw_time_since_last_jump = min(1e9, prev_timer + ctx.dt)
+        out = 0.0
+
+    # persist floor flag for next frame
+    p._rw_was_on_floor = on_floor
+    return out
+
 def throw_quality_reward(env: WarehouseBrawl) -> float:
     ctx = ctx_or_compute(env)
     p = env.objects["player"]
@@ -530,10 +562,11 @@ def gen_reward_manager(log_terms: bool=True):
         'edge_safety':             RewTerm(func=edge_safety, weight=0.044),
         'holding_more_than_3_keys': RewTerm(func=holding_nokeys_or_more_than_3keys_penalty, weight=7.0),
         'taunt_reward': RewTerm(func=in_state_reward, weight=-3.5, params={'desired_state': TauntState}),
-        'fell_off_map': RewTerm(func=fell_off_map_event, weight=-50.0, params={'pad': 1.0, 'only_bottom': False}),
+        'fell_off_map': RewTerm(func=fell_off_map_event, weight=-200.0, params={'pad': 1.0, 'only_bottom': False}),
         'spam_penalty': RewTerm(func=spam_penalty, weight=1.5, params={'attack_thresh': 3}),
         'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
         'weapon_distance': RewTerm(func=weapon_distance_reward, weight=0.5),
+        'jump_interval': RewTerm(func=jump_interval_reward, weight=4.0, params={'min_interval': 1.0, 'scale': 1.0}),
 
     }
     signal_subscriptions = {
