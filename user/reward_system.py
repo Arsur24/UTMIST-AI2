@@ -1,7 +1,12 @@
 import numpy as np
 from typing import Optional, Type, List, Tuple
+
+from pymunk import ShapeFilter
+from transformers.models.grounding_dino.modeling_grounding_dino import GroundingDinoDecoder
+
 #
 from environment.agent import *
+from environment.constants import WEAPON_CAT, ALL_CATS
 from user.reward_fastpath import ctx_or_compute
 
 # --------------------------------------------------------------------------------
@@ -287,9 +292,20 @@ def platform_aware_approach(env: WarehouseBrawl, y_thresh: float = 0.8, pos_only
     dx0 = abs(ctx.ppx - ctx.opx); dy0 = abs(ctx.ppy - ctx.opy)
     dx1 = abs(ctx.px  - ctx.ox ); dy1 = abs(ctx.py  - ctx.oy )
     delta = (dy0 - dy1) if (dy0 > y_thresh or dy1 > y_thresh) else (dx0 - dx1)
+    jbo_rew = 0
+    pf_h = None
     if pos_only and delta < 0.0:
         return 0.0
-    return delta * ctx.dt
+    for obj in getattr(env, "objects", {}).values():
+        cat = obj.__class__.__name__
+        if cat == "Stage" or cat == "Ground":
+            bb = obj.shape.cache_bb()
+            pf_h = bb.top
+            break
+    if ctx.ppy < pf_h:
+        if ctx.py >= pf_h:
+            jbo_rew = 1
+    return delta * ctx.dt + jbo_rew
 
 def head_to_opponent(env: WarehouseBrawl, threshold: float = 1.2, pos_only: bool = False) -> float:
     ctx = ctx_or_compute(env)
@@ -336,7 +352,25 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
     # reward combos for the player; penalize if opponent combos
     return 1.0 if agent == 'player' else -1.0
 
-def fell_off_map_event(env, pad: float = 0.0, only_bottom: bool = False) -> float:
+def spam_penalty(env: WarehouseBrawl, attack_thresh: int = 3) -> float:
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+    if ctx.p_attacking:
+        act = None
+        if act == 5 or act == 6:
+            return -1.0
+
+def weapon_distance_reward(env: WarehouseBrawl) -> float:
+    for obj in getattr(env, "objects", {}).values():
+        if obj.shape.filter == ShapeFilter(categories=WEAPON_CAT, mask=ALL_CATS):
+            weapon = obj
+            dist = math.sqrt()
+            break
+
+def throw_quality_reward(env: WarehouseBrawl) -> float:
+    pass
+
+def fell_off_map_event(env, pad: float = 0.0, only_bottom: bool = False, attack_pen: float = 0.5) -> float:
     """
     returns 1.0 exactly once when the player crosses the KO boundary.
     - pad > 0 shrinks the safe area slightly (fires earlier)
@@ -344,6 +378,9 @@ def fell_off_map_event(env, pad: float = 0.0, only_bottom: bool = False) -> floa
     """
     ctx = ctx_or_compute(env)
     p = env.objects["player"]
+    added_pen = 0
+    if ctx.p_attacking:
+        added_pen += attack_pen
 
     if only_bottom:
         outside = (ctx.py > (ctx.half_h - pad))
@@ -354,7 +391,7 @@ def fell_off_map_event(env, pad: float = 0.0, only_bottom: bool = False) -> floa
     fire = outside and not was_outside
     setattr(p, "_rw_was_outside", outside)
 
-    return 1.0 if fire else 0.0
+    return 1.0 + added_pen if fire else 0.0
 
 def idle_penalty(
     env: WarehouseBrawl,
