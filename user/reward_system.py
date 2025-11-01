@@ -474,6 +474,10 @@ def gen_reward_manager(log_terms: bool=True):
         'holding_more_than_3_keys': RewTerm(func=holding_nokeys_or_more_than_3keys_penalty, weight=7.0),
         'taunt_reward': RewTerm(func=in_state_reward, weight=-3.5, params={'desired_state': TauntState}),
         'fell_off_map': RewTerm(func=fell_off_map_event, weight=-50.0, params={'pad': 1.0, 'only_bottom': False}),
+        'spam_penalty': RewTerm(func=spam_penalty, weight=1.5, params={'attack_thresh': 3}),
+        'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
+        'weapon_distance_reward': RewTerm(func=weapon_distance_reward, weight=-0.5),
+
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=100)),
