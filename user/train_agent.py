@@ -457,7 +457,7 @@ if __name__ == "__main__":
     args = _parse_args()
 
     # single source of truth for the built-in default
-    DEFAULT_NUM_WORKERS = 32
+    DEFAULT_NUM_WORKERS = 48
 
     # use cli override if provided; else keep the script's default
     n_envs = args.numworkers if args.numworkers is not None else DEFAULT_NUM_WORKERS

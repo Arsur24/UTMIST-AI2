@@ -9,10 +9,10 @@ import pygame
 pygame.init()
 os.chdir(project_root)
 
-my_agent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_1000000_steps.zip")
+my_agent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2500000_steps.zip")
 
 #NOTE: Input your file path here in SubmittedAgent if you are loading a model:
-opponent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_1000000_steps.zip")
+opponent = SubmittedAgent(file_path="checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2500000_steps.zip")
 
 match_time = 99999
 
