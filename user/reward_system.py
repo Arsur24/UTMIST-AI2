@@ -513,6 +513,6 @@ def gen_reward_manager(log_terms: bool=True):
         'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=75)),
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=7)),
         'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=20)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_penalty, weight=8))
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_penalty, weight=25))
     }
     return RewardManager(reward_functions, signal_subscriptions, log_terms=log_terms)
