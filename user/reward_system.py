@@ -560,22 +560,11 @@ def idle_penalty(
 def downslam_penalty(env: WarehouseBrawl, penalty_scale: float = 50.0) -> float:
     """
     Penalize downslam (DSig/DAir) attacks when player is below the nearest ground/platform.
-
-    Logic:
-    - Check if player is currently performing a DSig or DAir attack
-    - Find the highest ground/platform below the player
-    - If player is above a platform and performing downslam, penalize
-    - If player is already below all platforms and still downslaming, heavy penalty
-
-    Args:
-        env: WarehouseBrawl environment
-        penalty_scale: Scale factor for the penalty value
-
-    Returns:
-        Penalty value (negative reward)
     """
     ctx = ctx_or_compute(env)
-    p = env.objects["player"]
+    p = env.objects.get("player", None)
+    if p is None:
+        return 0.0
 
     # Check if player is in an attack state
     state = getattr(p, "state", None)
@@ -590,9 +579,8 @@ def downslam_penalty(env: WarehouseBrawl, penalty_scale: float = 50.0) -> float:
     # Check if it's a downslam (DSig or DAir)
     is_downslam = False
     try:
-        # Check both enum name and value
         move_name = getattr(move_type, "name", str(move_type)).upper()
-        if "DSIG" in move_name or "DAIR" in move_name or "DOWN" in move_name and "SIG" in move_name or "DOWN" in move_name and "AIR" in move_name:
+        if "DSIG" in move_name or "DAIR" in move_name or ("DOWN" in move_name and ("SIG" in move_name or "AIR" in move_name)):
             is_downslam = True
     except:
         pass
@@ -606,38 +594,39 @@ def downslam_penalty(env: WarehouseBrawl, penalty_scale: float = 50.0) -> float:
     # Find the highest platform/ground below the player
     highest_ground_below = -float('inf')
 
-    # Check all objects for ground/platform collision surfaces
     for obj in getattr(env, "objects", {}).values():
         if obj is p:
             continue
 
-        # Get object position
-        obj_y = getattr(obj.body, "position", None)
-        if obj_y is None:
+        # --- SAFE: skip objects without a body or position ---
+        body = getattr(obj, "body", None)
+        if body is None or not hasattr(body, "position"):
             continue
-        obj_y = float(obj_y.y)
+
+        obj_pos = getattr(body, "position", None)
+        if obj_pos is None:
+            continue
+
+        obj_y = float(obj_pos.y)
 
         # Check if it's below player
         if obj_y < player_y:
             highest_ground_below = max(highest_ground_below, obj_y)
 
-    # If there's a ground below and player is above it while downslaming, penalize
+    # Apply penalty
     if highest_ground_below > -float('inf'):
         distance_to_ground = player_y - highest_ground_below
-
-        # Heavy penalty if very close to ground while downslaming (dangerous)
-        if distance_to_ground < 2.0:  # Less than 2 units above ground
+        if distance_to_ground < 2.0:
             return -penalty_scale * ctx.dt
         else:
-            # Moderate penalty scaled by proximity to ground
-            proximity_factor = max(0.0, 1.0 - (distance_to_ground / 5.0))  # Normalized to 5 unit range
+            proximity_factor = max(0.0, 1.0 - (distance_to_ground / 5.0))
             return -penalty_scale * 0.5 * proximity_factor * ctx.dt
 
-    # If no ground below (falling), penalize downslam as it's unsafe
-    if player_y < ctx.half_h - 1.0:  # Below center and no ground
+    if player_y < ctx.half_h - 1.0:
         return -penalty_scale * 0.3 * ctx.dt
 
     return 0.0
+
 
 
 '''
