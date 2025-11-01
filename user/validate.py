@@ -63,4 +63,3 @@ def test_agent_validation():
             )
     update_validation_status(username, True)
     logger.info("Validation match has completed successfully! Your agent is ready for battle!")
-
