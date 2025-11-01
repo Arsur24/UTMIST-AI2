@@ -359,6 +359,7 @@ def spam_penalty(env: WarehouseBrawl, attack_thresh: int = 3) -> float:
         act = None
         if act == 5 or act == 6:
             return -1.0
+    return 0.0
 
 def weapon_distance_reward(env: WarehouseBrawl) -> float:
     ctx = ctx_or_compute(env)
@@ -368,12 +369,41 @@ def weapon_distance_reward(env: WarehouseBrawl) -> float:
             x, y = ctx.px, ctx.py
             wx, wy = weapon.body.position.x, weapon.body.position.y
             dist = abs(wx - x) ** 2 + abs(wy - y) ** 2
-            break
+            # Return negative distance to encourage moving closer to weapons
+            return -dist * ctx.dt
+    # If no weapon found, return 0
+    return 0.0
 
 def throw_quality_reward(env: WarehouseBrawl) -> float:
     ctx = ctx_or_compute(env)
     p = env.objects["player"]
-    if not ctx.p_throwing:
+
+    # Determine whether the player is performing a throw-like action.
+    # The fast-path context does not expose `p_throwing`, so infer it:
+    # 1) Prefer an explicit method/flag on the player if available (e.g., is_throwing())
+    # 2) Otherwise, infer from input handler (historically key 'h' used for pickup/throw)
+    # 3) Fallback: when no signal exists, gate by generic attacking to avoid constant firing
+    p_throwing = False
+    is_throwing_attr = getattr(p, "is_throwing", None)
+    if callable(is_throwing_attr):
+        try:
+            p_throwing = bool(is_throwing_attr())
+        except Exception:
+            p_throwing = False
+    if not p_throwing:
+        inp = getattr(p, "input", None)
+        try:
+            if inp is not None and hasattr(inp, "key_status") and 'h' in inp.key_status:
+                ks = inp.key_status['h']
+                # treat either held or just_pressed as a throw-like event
+                p_throwing = bool(getattr(ks, 'held', False) or getattr(ks, 'just_pressed', False))
+        except Exception:
+            p_throwing = False
+    if not p_throwing:
+        # graceful fallback: only evaluate when attacking at all
+        p_throwing = bool(getattr(ctx, 'p_attacking', False))
+
+    if not p_throwing:
         return 0.0
 
     # Check if player is facing opponent
@@ -476,7 +506,6 @@ def gen_reward_manager(log_terms: bool=True):
         'fell_off_map': RewTerm(func=fell_off_map_event, weight=-50.0, params={'pad': 1.0, 'only_bottom': False}),
         'spam_penalty': RewTerm(func=spam_penalty, weight=1.5, params={'attack_thresh': 3}),
         'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
-        'weapon_distance_reward': RewTerm(func=weapon_distance_reward, weight=-0.5),
 
     }
     signal_subscriptions = {
