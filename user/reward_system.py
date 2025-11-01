@@ -345,7 +345,7 @@ def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
 def on_drop_penalty(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         if env.objects["player"].weapon == "Punch":
-            return -1.0
+            return -2.0
     return 0.0
 
 def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
