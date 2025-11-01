@@ -361,14 +361,35 @@ def spam_penalty(env: WarehouseBrawl, attack_thresh: int = 3) -> float:
             return -1.0
 
 def weapon_distance_reward(env: WarehouseBrawl) -> float:
+    ctx = ctx_or_compute(env)
     for obj in getattr(env, "objects", {}).values():
         if obj.shape.filter == ShapeFilter(categories=WEAPON_CAT, mask=ALL_CATS):
             weapon = obj
-            dist = math.sqrt()
+            x, y = ctx.px, ctx.py
+            wx, wy = weapon.body.position.x, weapon.body.position.y
+            dist = abs(wx - x) ** 2 + abs(wy - y) ** 2
             break
 
 def throw_quality_reward(env: WarehouseBrawl) -> float:
-    pass
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+    if not ctx.p_throwing:
+        return 0.0
+
+    # Check if player is facing opponent
+    sdx = _sign(ctx.dx)
+    if sdx == 0.0:
+        # If overlapping, use previous positions
+        sdx = _sign(ctx.ppx - ctx.opx)
+
+    desired = -sdx if sdx != 0.0 else ctx.p_face
+    align = 0.5 * (1.0 + desired * ctx.p_face)  # 0..1
+
+    # Reward if facing opponent (align > 0.5), penalize if not
+    reward = 1.0 if align > 0.5 else -0.5
+
+    return reward * ctx.dt
+
 
 def fell_off_map_event(env, pad: float = 0.0, only_bottom: bool = False, attack_pen: float = 0.5) -> float:
     """
