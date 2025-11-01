@@ -442,6 +442,79 @@ def jump_interval_reward(env: WarehouseBrawl, min_interval: float = 1.0, scale: 
     p._rw_was_on_floor = on_floor
     return out
 
+def below_platform_penalty(
+    env: WarehouseBrawl,
+    x_pad: float = 0.4,
+    penalty_scale: float = 1.0,
+    grace_distance: float = 0.5
+) -> float:
+    """
+    Penalize the agent for being below the nearest platform/ground.
+    Uses platform detection similar to platform_soft_approach.
+    """
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+
+    # Skip if on floor or platform
+    is_on_floor = getattr(p, "is_on_floor", None)
+    if bool(getattr(p, "on_platform", False)) or (callable(is_on_floor) and is_on_floor()):
+        return 0.0
+
+    # Find nearest platform using the helper function
+    pf = _nearest_platform_surface(env, ctx.px, ctx.py, x_pad)
+
+    if pf is None:
+        # No platform found - likely falling off map, let other penalties handle it
+        return 0.0
+
+    surface_y = float(pf[0])
+
+    # Calculate vertical distance (y+ is down in engine, so player below platform means py > surface_y)
+    distance_below = ctx.py - surface_y
+
+    if distance_below <= grace_distance:
+        # Player is above or slightly below platform (within grace distance)
+        return 0.0
+
+    # Penalize based on how far below the platform we are
+    # Quadratic penalty that grows with distance
+    excess = distance_below - grace_distance
+    penalty = -penalty_scale * (excess * excess)
+
+    return penalty * ctx.dt
+
+
+def face_toward_enemy(
+    env: WarehouseBrawl,
+    reward_scale: float = 1.0
+) -> float:
+    """
+    Reward the agent for facing toward the enemy.
+    Returns positive reward when facing enemy, zero or negative when facing away.
+    """
+    ctx = ctx_or_compute(env)
+
+    # Determine which direction the enemy is (sign of dx)
+    # dx = px - ox, so if dx > 0, enemy is to the left (need to face left = -1)
+    # if dx < 0, enemy is to the right (need to face right = +1)
+    sdx = _sign(ctx.dx)
+    if sdx == 0.0:
+        # If overlapping, use previous positions
+        sdx = _sign(ctx.ppx - ctx.opx)
+
+    # Desired facing direction is opposite of dx sign
+    desired_face = -sdx if sdx != 0.0 else ctx.p_face
+
+    # Calculate alignment: 0 = facing wrong way, 1 = facing correct way
+    # ctx.p_face is +1 (right) or -1 (left)
+    alignment = 0.5 * (1.0 + desired_face * ctx.p_face)  # 0..1
+
+    # Convert to reward: -1 when facing away, +1 when facing toward
+    reward = (2.0 * alignment - 1.0) * reward_scale
+
+    return reward * ctx.dt
+
+
 def throw_quality_reward(env: WarehouseBrawl) -> float:
     ctx = ctx_or_compute(env)
     p = env.objects["player"]
@@ -622,42 +695,39 @@ Add your dictionary of RewardFunctions here using RewTerms
 def gen_reward_manager(log_terms: bool=True):
     reward_functions = {
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=1.0),
-        'damage_reward':  RewTerm(func=damage_interaction_reward, weight=(140*6.7),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=1.5),  # Increased: more afraid of dangerous zones
+        'damage_reward':  RewTerm(func=damage_interaction_reward, weight=(140*6.7*1.2),  # Reduced from 1.5 to 1.2: less offensive
                                   params={"mode": RewardMode.ASYMMETRIC_OFFENSIVE}),
-        'defence_reward': RewTerm(func=damage_interaction_reward, weight=4.0,
+        'defence_reward': RewTerm(func=damage_interaction_reward, weight=8.0,  # Doubled from 4.0: more defensive
                                   params={"mode": RewardMode.ASYMMETRIC_DEFENSIVE}),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-        'platform_aware_approach': RewTerm(func=platform_aware_approach, weight=7.5,
+        'platform_aware_approach': RewTerm(func=platform_aware_approach, weight=10.0,  # Increased from 7.5: stay on platforms
                                            params={"y_thresh": 0.8, "pos_only": True}),
-        'move_dir_reward': RewTerm(func=head_to_opponent, weight=5.0),
-        'move_towards_reward': RewTerm(func=head_to_opponent, weight=10.0, params={"threshold" : 0.55, "pos_only": True}),
-        # 'useless_attk_penalty': RewTerm(func=penalize_useless_attacks_shaped, weight=0.044, params={"distance_thresh" : 2.75, "scale" : 1.25}),
+        'move_dir_reward': RewTerm(func=head_to_opponent, weight=10.0),
+        'move_towards_reward': RewTerm(func=head_to_opponent, weight=20.0, params={"threshold" : 0.55, "pos_only": True}),
+        'useless_attk_penalty': RewTerm(func=penalize_useless_attacks_shaped, weight=0.055, params={"distance_thresh" : 2.75, "scale" : 1.25}),  # Slightly increased penalty
         'attack_quality': RewTerm(
             func=attack_quality_reward,
-            weight=3.0,
+            weight=2.5,  # Reduced from 3.0: slightly less aggressive
             params=dict(distance_thresh=1.75, near_bonus_scale=1.0, far_penalty_scale=1.25),
         ),
         'idle_penalty': RewTerm(func=idle_penalty, weight=5.0, params={'speed_thresh': 0.7, 'ema_tau': 0.35}),
-        # 'attack_misalign': RewTerm(func=attack_misalignment_penalty, weight=2.0),
+        'attack_misalign': RewTerm(func=attack_misalignment_penalty, weight=2.0),
         # gentle edge avoidance (dt inside: small)
-        'edge_safety':             RewTerm(func=edge_safety, weight=0.77),
+        'edge_safety':             RewTerm(func=edge_safety, weight=2.0),  # Increased from 0.77: much more afraid of edges
         'holding_more_than_3_keys': RewTerm(func=holding_nokeys_or_more_than_3keys_penalty, weight=7.0),
         'taunt_reward': RewTerm(func=in_state_reward, weight=-3.5, params={'desired_state': TauntState}),
-        'fell_off_map': RewTerm(func=fell_off_map_event, weight=-200.0, params={'pad': 1.0, 'only_bottom': False}),
-        'spam_penalty': RewTerm(func=spam_penalty, weight=1.5, params={'attack_thresh': 3}),
-        'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
-        'weapon_distance': RewTerm(func=weapon_distance_reward, weight=0.5),
+        'fell_off_map': RewTerm(func=fell_off_map_event, weight=-2000.0, params={'pad': 1.0, 'only_bottom': False}),  # Doubled from -1000: REALLY afraid of falling
         'jump_interval': RewTerm(func=jump_interval_reward, weight=4.0, params={'min_interval': 1.0, 'scale': 1.0}),
-        'downslam_penalty': RewTerm(func=downslam_penalty, weight=1.0, params={'penalty_scale': 50.0}),
-        'fell_off_map': RewTerm(func=fell_off_map_event, weight=-100.0, params={'pad': 1.0, 'only_bottom': False}),
+        'downslam_penalty': RewTerm(func=downslam_penalty, weight=2.0, params={'penalty_scale': 50.0}),  # Doubled: avoid risky downslams
+        'below_platform_penalty': RewTerm(func=below_platform_penalty, weight=8.0, params={'x_pad': 0.4, 'penalty_scale': 1.5, 'grace_distance': 0.5}),  # Increased weight and scale
+        'face_toward_enemy': RewTerm(func=face_toward_enemy, weight=3.0, params={'reward_scale': 1.0}),
         'throw_quality': RewTerm(func=throw_quality_reward, weight=11.0),
         'weapon_distance': RewTerm(func=weapon_distance_reward, weight=4.0),
 
         'spam_penalty': RewTerm(
             func=spam_penalty,
             weight=10.0,
-            # you can tune these if needed:
             params={'window_frames': 5, 'inc': 1.0, 'decay_per_step': 0.15, 'scale': 1.0}
         ),
 
