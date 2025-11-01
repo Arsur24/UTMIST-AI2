@@ -401,6 +401,28 @@ def weapon_distance_reward(env: WarehouseBrawl) -> float:
     # No weapon objects found
     return 0.0
 
+def downslam_when_lower_than_platform_penalty(env: WarehouseBrawl, platform_height: float = 3.0, penalty: float = 1.0) -> float:
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+
+    # Check if player is performing a downslam-like action.
+    is_downslamming = False
+    is_downslamming_attr = getattr(p, "is_downslamming", None)
+    if callable(is_downslamming_attr):
+        try:
+            is_downslamming = bool(is_downslamming_attr())
+        except Exception:
+            is_downslamming = False
+
+    if not is_downslamming:
+        return 0.0
+
+    # Penalize if player is below the platform height
+    if ctx.py > platform_height:
+        return -penalty * ctx.dt
+
+    return 0.0
+
 def jump_interval_reward(env: WarehouseBrawl, min_interval: float = 1.0, scale: float = 1.0) -> float:
     ctx = ctx_or_compute(env)
     p = env.objects["player"]
@@ -534,6 +556,90 @@ def idle_penalty(
     t = max(0.0, (speed_thresh - ema) / max(1e-6, speed_thresh))
     return -(t * t) * ctx.dt
 
+
+def downslam_penalty(env: WarehouseBrawl, penalty_scale: float = 50.0) -> float:
+    """
+    Penalize downslam (DSig/DAir) attacks when player is below the nearest ground/platform.
+
+    Logic:
+    - Check if player is currently performing a DSig or DAir attack
+    - Find the highest ground/platform below the player
+    - If player is above a platform and performing downslam, penalize
+    - If player is already below all platforms and still downslaming, heavy penalty
+
+    Args:
+        env: WarehouseBrawl environment
+        penalty_scale: Scale factor for the penalty value
+
+    Returns:
+        Penalty value (negative reward)
+    """
+    ctx = ctx_or_compute(env)
+    p = env.objects["player"]
+
+    # Check if player is in an attack state
+    state = getattr(p, "state", None)
+    if not isinstance(state, AttackState):
+        return 0.0
+
+    # Get the move type being executed
+    move_type = getattr(state, "move_type", None)
+    if move_type is None:
+        return 0.0
+
+    # Check if it's a downslam (DSig or DAir)
+    is_downslam = False
+    try:
+        # Check both enum name and value
+        move_name = getattr(move_type, "name", str(move_type)).upper()
+        if "DSIG" in move_name or "DAIR" in move_name or "DOWN" in move_name and "SIG" in move_name or "DOWN" in move_name and "AIR" in move_name:
+            is_downslam = True
+    except:
+        pass
+
+    if not is_downslam:
+        return 0.0
+
+    # Player is performing a downslam attack
+    player_y = ctx.py
+
+    # Find the highest platform/ground below the player
+    highest_ground_below = -float('inf')
+
+    # Check all objects for ground/platform collision surfaces
+    for obj in getattr(env, "objects", {}).values():
+        if obj is p:
+            continue
+
+        # Get object position
+        obj_y = getattr(obj.body, "position", None)
+        if obj_y is None:
+            continue
+        obj_y = float(obj_y.y)
+
+        # Check if it's below player
+        if obj_y < player_y:
+            highest_ground_below = max(highest_ground_below, obj_y)
+
+    # If there's a ground below and player is above it while downslaming, penalize
+    if highest_ground_below > -float('inf'):
+        distance_to_ground = player_y - highest_ground_below
+
+        # Heavy penalty if very close to ground while downslaming (dangerous)
+        if distance_to_ground < 2.0:  # Less than 2 units above ground
+            return -penalty_scale * ctx.dt
+        else:
+            # Moderate penalty scaled by proximity to ground
+            proximity_factor = max(0.0, 1.0 - (distance_to_ground / 5.0))  # Normalized to 5 unit range
+            return -penalty_scale * 0.5 * proximity_factor * ctx.dt
+
+    # If no ground below (falling), penalize downslam as it's unsafe
+    if player_y < ctx.half_h - 1.0:  # Below center and no ground
+        return -penalty_scale * 0.3 * ctx.dt
+
+    return 0.0
+
+
 '''
 Add your dictionary of RewardFunctions here using RewTerms
 '''
@@ -567,6 +673,7 @@ def gen_reward_manager(log_terms: bool=True):
         'throw_quality': RewTerm(func=throw_quality_reward, weight=2.0),
         'weapon_distance': RewTerm(func=weapon_distance_reward, weight=0.5),
         'jump_interval': RewTerm(func=jump_interval_reward, weight=4.0, params={'min_interval': 1.0, 'scale': 1.0}),
+        'downslam_penalty': RewTerm(func=downslam_penalty, weight=1.0, params={'penalty_scale': 50.0}),
 
     }
     signal_subscriptions = {
@@ -574,6 +681,6 @@ def gen_reward_manager(log_terms: bool=True):
         'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=75)),
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=7)),
         'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=20)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_penalty, weight=25))
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_penalty, weight=50))
     }
     return RewardManager(reward_functions, signal_subscriptions, log_terms=log_terms)

@@ -16,7 +16,7 @@ os.chdir(project_root)
 
 # anchor: config
 # primary checkpoint + optional alternate
-path: str = "checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2000000_steps.zip"
+path: str = "checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_500000_steps.zip"
 pathAlt: Optional[str] = "checkpoints/FusedFeatureExtractor6N(DeeperStill)/FusedFeatureExtractor6N(DeeperStill)_2000000_steps.zip"
 
 # primary architecture; set any to None to use defaults baked into SubmittedAgent
